@@ -11,6 +11,7 @@ public final class SettingsWindowManager: NSObject, NSWindowDelegate {
     }
 
     public func show(tab: SettingsTab = .general) {
+        NotificationCenter.default.post(name: NSNotification.Name("app.seeusage.closePopover"), object: nil)
         if let window {
             NotificationCenter.default.post(
                 name: NSNotification.Name("app.seeusage.selectSettingsTab"),

@@ -27,9 +27,11 @@ final class SingleInstanceLock {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private var localClickMonitor: Any?
+    private var globalClickMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableAutomaticTermination("SeeUsage Menu Bar Active")
@@ -37,6 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupPopover()
         observeStore()
         observeOpenSettings()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(closePopoverForSettings),
+            name: NSNotification.Name("app.seeusage.closePopover"),
+            object: nil
+        )
         NotificationManager.shared.requestAuthorization()
 
         if SettingsStore.shared.hudEnabled {
@@ -49,11 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard let button = statusItem?.button else { return true }
-        if !popover.isShown {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-        }
+        popover.close()
         SettingsWindowManager.shared.show()
         return true
     }
@@ -73,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentSize = NSSize(width: 360, height: 470)
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
         popover.contentViewController = NSHostingController(rootView: UsagePopoverView())
     }
 
@@ -85,6 +90,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    func popoverDidShow(_ notification: Notification) {
+        let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: clicks) { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+            let clickedWindow = event.window
+            let popoverWindow = self.popover.contentViewController?.view.window
+            let statusWindow = self.statusItem.button?.window
+            if clickedWindow != popoverWindow && clickedWindow != statusWindow {
+                self.popover.close()
+            }
+            return event
+        }
+
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: clicks) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.popover.close()
+            }
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        if let localClickMonitor {
+            NSEvent.removeMonitor(localClickMonitor)
+            self.localClickMonitor = nil
+        }
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+            self.globalClickMonitor = nil
+        }
+    }
+
+    @objc private func closePopoverForSettings(_ notification: Notification) {
+        popover.close()
     }
 
     private func updateButtonContent() {
