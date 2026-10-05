@@ -6,6 +6,7 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
     public static let shared = FloatingHUDManager()
 
     private var panel: NSPanel?
+    private var dragStart: (mouse: NSPoint, origin: NSPoint)?
     private static let framePrefKey = "app.seeusage.floatingHUDFrame"
 
     private override init() {
@@ -53,6 +54,12 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
                 self?.applySettings()
             }
         }
+
+        for name in [Notification.Name.usageStoreDidUpdate, NSApplication.didChangeScreenParametersNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.applySettings() }
+            }
+        }
     }
 
     public var isVisible: Bool {
@@ -80,13 +87,30 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
     }
 
     public func hide() {
+        dragStart = nil
         SettingsStore.shared.hudEnabled = false
         savePanelPosition()
         panel?.orderOut(nil)
     }
 
+    func dragBar() {
+        guard let panel else { return }
+        let mouse = NSEvent.mouseLocation
+        if dragStart == nil { dragStart = (mouse, panel.frame.origin) }
+        guard let start = dragStart else { return }
+        panel.setFrameOrigin(NSPoint(
+            x: start.origin.x + mouse.x - start.mouse.x,
+            y: start.origin.y + mouse.y - start.mouse.y
+        ))
+    }
+
+    func finishDraggingBar() {
+        dragStart = nil
+        savePanelPosition()
+    }
+
     private func createAndShowPanel() {
-        let hostingController = NSHostingController(rootView: FloatingHUDView())
+        let hostingController = FloatingGlassHostingController()
 
         let p = NSPanel(
             contentRect: calculateInitialFrame(),
@@ -107,6 +131,7 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
         p.hidesOnDeactivate = false
 
         self.panel = p
+        (p.contentViewController as? FloatingGlassHostingController)?.updateAppearance()
         applyContentSize(to: p)
         p.orderFrontRegardless()
     }
@@ -124,6 +149,7 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
             return
         }
 
+        (p.contentViewController as? FloatingGlassHostingController)?.updateAppearance()
         applyContentSize(to: p)
         p.level = SettingsStore.shared.hudAlwaysOnTop ? .floating : .normal
         if !p.isVisible {
@@ -155,20 +181,40 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
     }
 
     private var desiredContentSize: NSSize {
-        SettingsStore.shared.hudCompactMode
-            ? NSSize(width: 360, height: 64)
-            : NSSize(width: 380, height: 300)
+        let settings = SettingsStore.shared
+        if settings.hudCompactMode {
+            let store = UsageStore.shared
+            let items = FloatingQuotaItem.items(
+                profiles: settings.orderedDisplayProfiles,
+                snapshots: store.snapshots,
+                claudeUsage: store.claudeUsageSnapshot,
+                refreshIntervalMinutes: settings.refreshIntervalMinutes,
+                quotas: settings.hudBarQuotas,
+                hiddenItems: settings.hudBarHiddenItems
+            )
+            let screen = panel.flatMap { panel in
+                NSScreen.screens.first { $0.visibleFrame.intersects(panel.frame) }
+            } ?? NSScreen.main
+            return FloatingBarLayout.size(
+                items: items,
+                availableWidth: screen?.visibleFrame.width ?? 1200,
+                availableHeight: screen?.visibleFrame.height ?? 800,
+                orientation: settings.hudBarOrientation,
+                quotas: settings.hudBarQuotas
+            )
+        }
+        return NSSize(width: 380, height: 300)
     }
 
     private func applyContentSize(to panel: NSPanel) {
         let size = desiredContentSize
-        guard panel.frame.size != size else { return }
         var frame = panel.frame
         frame.size = size
         if let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(panel.frame) }) {
             frame.origin.x = min(max(frame.origin.x, screen.visibleFrame.minX), screen.visibleFrame.maxX - size.width)
             frame.origin.y = min(max(frame.origin.y, screen.visibleFrame.minY), screen.visibleFrame.maxY - size.height)
         }
+        guard panel.frame != frame else { return }
         panel.setFrame(frame, display: true, animate: true)
         savePanelPosition()
     }

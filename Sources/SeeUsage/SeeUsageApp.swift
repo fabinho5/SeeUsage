@@ -93,6 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func popoverDidShow(_ notification: Notification) {
+        if let window = popover.contentViewController?.view.window {
+            window.isOpaque = false
+            window.backgroundColor = .clear
+        }
         let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
 
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: clicks) { [weak self] event in
@@ -204,14 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let fillRect = NSRect(x: 0.5, y: 0.5, width: fillWidth, height: height - 1.0)
             let fillPath = NSBezierPath(roundedRect: fillRect, xRadius: 2.0, yRadius: 2.0)
 
-            let fillColor: NSColor
-            if clamped <= 15.0 {
-                fillColor = NSColor(Color(hex: "#f54752")) // Red
-            } else if clamped <= 35.0 {
-                fillColor = NSColor(Color(hex: "#fa9e2e")) // Amber
-            } else {
-                fillColor = NSColor(Color(hex: "#00e599")) // Green / Emerald
-            }
+            let fillColor = UIColors.quotaStatusNSColor(percent: clamped)
             fillColor.setFill()
             fillPath.fill()
 
@@ -238,24 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             )
             let dotPath = NSBezierPath(ovalIn: dotRect)
 
-            let dotColor: NSColor
-            if let p = percent {
-                if p <= 15.0 {
-                    dotColor = NSColor(Color(hex: "#f54752"))
-                } else if p <= 35.0 {
-                    dotColor = NSColor(Color(hex: "#fa9e2e"))
-                } else {
-                    dotColor = NSColor(Color(hex: "#00e599"))
-                }
-            } else {
-                dotColor = NSColor.secondaryLabelColor
-            }
-
-            // Outer soft glow ring
-            let ringRect = dotRect.insetBy(dx: -1.8, dy: -1.8)
-            let ringPath = NSBezierPath(ovalIn: ringRect)
-            dotColor.withAlphaComponent(0.22).setFill()
-            ringPath.fill()
+            let dotColor = UIColors.quotaStatusNSColor(percent: percent)
 
             // Solid core dot
             dotColor.setFill()

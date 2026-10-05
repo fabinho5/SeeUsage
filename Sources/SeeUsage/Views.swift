@@ -30,6 +30,7 @@ public final class SettingsWindowManager: NSObject, NSWindowDelegate {
         )
         panel.title = "SeeUsage Settings"
         panel.contentMinSize = NSSize(width: 560, height: 440)
+        panel.backgroundColor = .windowBackgroundColor
         panel.isReleasedWhenClosed = false
         panel.delegate = self
         panel.contentViewController = NSHostingController(rootView: SettingsView(initialTab: tab))
@@ -160,7 +161,7 @@ public struct UsagePopoverView: View {
                                 $0.timestamp >= Date().addingTimeInterval(-85 * 86_400)
                             },
                             codexProfiles: settings.codexProfiles,
-                            accent: settings.currentTheme.accent
+                            accent: settings.currentTheme.uiAccent
                         )
                     }
                 }
@@ -171,7 +172,7 @@ public struct UsagePopoverView: View {
             footer
         }
         .frame(width: 360, height: 470)
-        .background(.background)
+        .modifier(NativeGlassSurface(material: .popover))
         .confirmationDialog(
             "Use a banked reset?",
             isPresented: $isConfirmingReset,
@@ -192,7 +193,7 @@ public struct UsagePopoverView: View {
         } message: {
             Text(resultMessage ?? "")
         }
-        .tint(settings.currentTheme.accent)
+        .tint(settings.currentTheme.uiAccent)
     }
 
     private var header: some View {
@@ -309,14 +310,16 @@ public struct UsagePopoverView: View {
                 if let percent = window.remainingPercent {
                     Text("\(Int(percent.rounded()))%")
                         .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(percent <= 15 ? .red : (percent <= 35 ? .orange : .primary))
+                        .foregroundStyle(UIColors.quotaTextColor(percent: percent))
                 } else {
                     Text("—").foregroundStyle(.secondary)
                 }
             }
             if let percent = window.remainingPercent {
                 ProgressView(value: max(0, min(100, percent)), total: 100)
-                    .tint(percent <= 15 ? .red : (percent <= 35 ? .orange : .accentColor))
+                    .progressViewStyle(QuotaProgressStyle(
+                        color: UIColors.quotaFillColor(percent: percent, accent: settings.currentTheme.uiAccent)
+                    ))
             }
             if let reset = window.resetsAt {
                 Text("Resets \(Formatters.resetDescription(for: reset))")
@@ -353,6 +356,24 @@ public struct UsagePopoverView: View {
             )
             resultMessage = result.message
         }
+    }
+}
+
+// macOS's default linear style doesn't reliably apply a custom tint.
+private struct QuotaProgressStyle: ProgressViewStyle {
+    let color: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        GeometryReader { geometry in
+            Capsule()
+                .fill(UIColors.track)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(color)
+                        .frame(width: geometry.size.width * CGFloat(configuration.fractionCompleted ?? 0))
+                }
+        }
+        .frame(height: 8)
     }
 }
 
@@ -623,7 +644,8 @@ public struct SettingsView: View {
         }
         .padding(20)
         .frame(minWidth: 560, minHeight: 440)
-        .tint(settings.currentTheme.accent)
+        .background(UIColors.background)
+        .tint(settings.currentTheme.uiAccent)
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("app.seeusage.selectSettingsTab"))) { note in
             if (note.object as? String) == SettingsTab.profiles.rawValue {
                 selectedTab = .providers
@@ -652,11 +674,34 @@ public struct SettingsView: View {
             }
 
             Section("Appearance") {
+                Toggle("Show floating bar", isOn: Binding(
+                    get: { settings.hudEnabled },
+                    set: { enabled in
+                        if enabled { settings.hudCompactMode = true }
+                        settings.hudEnabled = enabled
+                        FloatingHUDManager.shared.applySettings()
+                    }
+                ))
+                if settings.hudEnabled {
+                    Picker("Bar orientation", selection: $settings.hudBarOrientation) {
+                        ForEach(FloatingBarOrientation.allCases) { orientation in
+                            Text(orientation.title).tag(orientation)
+                        }
+                    }
+                    Picker("Bar quotas", selection: $settings.hudBarQuotas) {
+                        ForEach(FloatingBarQuotas.allCases) { quotas in
+                            Text(quotas.title).tag(quotas)
+                        }
+                    }
+                    DisclosureGroup("Profiles and providers") {
+                        FloatingBarSelection()
+                    }
+                }
                 Picker("Accent color", selection: $settings.selectedThemeID) {
                     ForEach(appearancePickerThemes) { theme in
                         HStack(spacing: 8) {
                             Circle()
-                                .fill(theme.accent)
+                                .fill(theme.uiAccent)
                                 .frame(width: 10, height: 10)
                             Text(theme.name)
                         }

@@ -17,7 +17,7 @@ SeeUsage monitors your remaining AI coding allowances across local CLI accounts 
 - **Claude Code usage (optional)**: Enable usage sync in Settings → Providers to show Claude Code's 5-hour and weekly subscription quotas. SeeUsage reads Claude Code's local status-line data and preserves an existing custom status line.
 - **Customizable menu bar**: Choose between Lowest Quota (`⚡ 47%`), Dual Quotas (`cx: 92% · ag: 81%`), Mini Gauge, or Icon Only, with color-coded quota health.
 - **Interactive watch dashboard (`seeusage watch`)**: Real-time terminal TUI with second-by-second countdowns to quota resets and theme switching.
-- **Floating Mini-HUD (Desktop Widget)**: A draggable, semi-translucent floating widget with compact pill or detailed card layouts, pin always-on-top, CLI-adjustable opacity, and live reset countdowns.
+- **Floating percentage bar**: Enable Settings → General → Appearance → Show floating bar for a draggable bar with per-profile quotas and no progress bars. Choose horizontal or vertical orientation, 5-hour/weekly/both quotas, and which providers or individual Codex profiles appear, in Settings or the bar’s right-click menu. Hiding a provider preserves its profile selections. Selected profiles remain visible with “—” when quota data is unavailable. The horizontal bar groups each profile name above its percentages and only scrolls when the screen cannot fit the content. Its position and preferences are saved; pin and hide actions are available in the right-click menu. The bar uses native, untinted Liquid Glass on macOS 26+, with frosted materials on older versions. A detailed HUD remains available through the CLI.
 - **Banked Codex resets**: See available reset credits in the popover and confirm before activating one; the CLI can also list and consume credits.
 - **Quota Analytics & Usage History**: Lightweight local history in `~/.config/seeusage/history.json`, with terminal summaries and CSV/JSON export for consumption and reset records.
 - **Native system notifications**: Custom alerts when any quota drops below a configurable threshold and when limits reset back to 100%.
@@ -45,7 +45,7 @@ open ~/Applications/SeeUsage.app
 ## Requirements
 
 - macOS 14.0 (Sonoma) or newer
-- Swift 5.9+ or Xcode Command Line Tools
+- macOS 26 SDK or newer for source builds (Xcode 26 or its Command Line Tools); the app still supports macOS 14+
 - [Codex CLI](https://github.com/openai/codex) (`codex`) installed and authenticated (optional, for Codex tracking)
 - [Antigravity CLI](https://github.com/google/antigravity) (`agy`) installed and authenticated (optional, for Antigravity tracking)
 

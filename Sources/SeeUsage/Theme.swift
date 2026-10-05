@@ -1,4 +1,66 @@
+import AppKit
 import SwiftUI
+
+// Native UI colors are independent of the terminal palettes below.
+public enum UIColors {
+    public static let background = Color(nsColor: .windowBackgroundColor)
+    public static let surface = Color(nsColor: .controlBackgroundColor)
+    public static let border = Color(nsColor: .separatorColor)
+    public static let borderActive = Color(nsColor: .tertiaryLabelColor)
+    public static let textPrimary = Color.primary
+    public static let textSecondary = Color.secondary
+    public static let textMuted = Color(nsColor: .secondaryLabelColor)
+    public static let track = Color.primary.opacity(0.08)
+
+    private static let emeraldAccent = adaptiveAccent(light: 0x23856C, dark: 0x62BDA1)
+    private static let oceanAccent = adaptiveAccent(light: 0x3478BF, dark: 0x77ABE3)
+    private static let groveAccent = adaptiveAccent(light: 0x5D7D47, dark: 0x91B379)
+    private static let irisAccent = adaptiveAccent(light: 0x8063AD, dark: 0xB29AD8)
+    private static let emberAccent = adaptiveAccent(light: 0x9D704F, dark: 0xC9A280)
+
+    fileprivate static func accent(for themeID: String) -> Color {
+        switch themeID {
+        case "t3-default", "solarized": emeraldAccent
+        case "t3-ocean", "tokyo-night", "palenight": oceanAccent
+        case "t3-grove", "cyberpunk": groveAccent
+        case "t3-iris": irisAccent
+        case "t3-ember": emberAccent
+        case "dracula": Color(nsColor: .systemPink)
+        default: Color.accentColor
+        }
+    }
+
+    private static func adaptiveAccent(light: UInt32, dark: UInt32) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(
+                srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: 1
+            )
+        })
+    }
+
+    public static func quotaStatusColor(percent: Double?) -> Color {
+        Color(nsColor: quotaStatusNSColor(percent: percent))
+    }
+
+    public static func quotaStatusNSColor(percent: Double?) -> NSColor {
+        guard let percent else { return .secondaryLabelColor }
+        if percent <= 15 { return .systemRed }
+        if percent <= 35 { return .systemOrange }
+        return .systemGreen
+    }
+
+    public static func quotaTextColor(percent: Double) -> Color {
+        percent <= 35 ? quotaStatusColor(percent: percent) : textPrimary
+    }
+
+    public static func quotaFillColor(percent: Double, accent: Color) -> Color {
+        percent <= 35 ? quotaStatusColor(percent: percent) : accent
+    }
+}
 
 // MARK: - Color Hex Initializer
 public extension Color {
@@ -60,6 +122,10 @@ public struct AppTheme: Identifiable, Hashable, Sendable {
     public let surfaceHex: String
     public let accentHex: String
     public let secondaryHex: String
+
+    public var uiAccent: Color {
+        UIColors.accent(for: id)
+    }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(id)

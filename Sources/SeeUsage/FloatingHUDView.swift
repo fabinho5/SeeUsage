@@ -15,107 +15,68 @@ public struct FloatingHUDView: View {
                 compactHUDContent
             } else {
                 expandedHUDContent
+                    .padding(10)
             }
         }
-        .padding(10)
-        .background(
-            ZStack {
-                // Frosted Glass Material Base
-                VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
-
-                // Theme Tint with Configurable Opacity
-                settings.currentTheme.background
-                    .opacity(settings.hudOpacity)
-
-                // Glowing/Accent Border
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(
-                        isHovered ? settings.currentTheme.borderActive : settings.currentTheme.border,
-                        lineWidth: 1
-                    )
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .shadow(color: Color.black.opacity(0.35), radius: 10, x: 0, y: 4)
-        )
         .onHover { hovering in
             withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
                 isHovered = hovering
             }
         }
+        .onChange(of: settings.hudBarOrientation) { _, _ in
+            FloatingHUDManager.shared.applySettings()
+        }
+        .onChange(of: settings.hudBarQuotas) { _, _ in
+            FloatingHUDManager.shared.applySettings()
+        }
+        .onChange(of: barItems.map { "\($0.id):\($0.label)" }) { _, _ in
+            FloatingHUDManager.shared.applySettings()
+        }
     }
 
-    // MARK: - Compact Mode (Sleek Horizontal Pill)
+    private var barItems: [FloatingQuotaItem] {
+        FloatingQuotaItem.items(
+            profiles: settings.orderedDisplayProfiles,
+            snapshots: store.snapshots,
+            claudeUsage: store.claudeUsageSnapshot,
+            refreshIntervalMinutes: settings.refreshIntervalMinutes,
+            quotas: settings.hudBarQuotas,
+            hiddenItems: settings.hudBarHiddenItems
+        )
+    }
+
+    // MARK: - Floating percentage bar
     private var compactHUDContent: some View {
-        HStack(spacing: 8) {
-            // Drag handle / Status dot
-            Circle()
-                .fill(healthColor(percent: store.minRemainingPercent ?? 100))
-                .frame(width: 8, height: 8)
-                .shadow(color: healthColor(percent: store.minRemainingPercent ?? 100).opacity(0.6), radius: 3)
-
-            // Codex Mini
-            if let cx = store.codexLowestPercent {
-                HStack(spacing: 3) {
-                    Text("cx:")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(settings.currentTheme.textMuted)
-                    Text("\(cx)%")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundStyle(settings.currentTheme.accent)
-                }
-            }
-
-            // Divider
-            if store.codexLowestPercent != nil && store.antigravityLowestPercent != nil {
-                Text("·")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(settings.currentTheme.textMuted.opacity(0.6))
-            }
-
-            // Antigravity Mini
-            if let ag = store.antigravityLowestPercent {
-                HStack(spacing: 3) {
-                    Text("ag:")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(settings.currentTheme.textMuted)
-                    Text("\(ag)%")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundStyle(settings.currentTheme.cyan)
-                }
-            }
-
-            // Micro Gauge
-            if let lowest = store.minRemainingPercent {
-                miniHorizontalGauge(percent: Double(lowest), width: 34, height: 6)
-            }
-
-            // Controls (Visible on hover or discreetly dimmed)
-            HStack(spacing: 4) {
-                // Expand button
-                hudIconButton(icon: "arrow.up.left.and.arrow.down.right", help: "Expand HUD") {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                        settings.hudCompactMode = false
+        FloatingQuotaBar(items: barItems, orientation: settings.hudBarOrientation, quotas: settings.hudBarQuotas)
+            .gesture(barDragGesture, including: .gesture)
+        .contextMenu {
+            Menu("Orientation") {
+                Picker("Orientation", selection: $settings.hudBarOrientation) {
+                    ForEach(FloatingBarOrientation.allCases) { orientation in
+                        Text(orientation.title).tag(orientation)
                     }
                 }
-
-                // Pin toggle button
-                hudIconButton(
-                    icon: settings.hudAlwaysOnTop ? "pin.fill" : "pin",
-                    help: settings.hudAlwaysOnTop ? "Always on top (active)" : "Desktop level",
-                    active: settings.hudAlwaysOnTop
-                ) {
-                    settings.hudAlwaysOnTop.toggle()
-                }
-
-                // Close button
-                hudIconButton(icon: "xmark", help: "Hide HUD") {
-                    FloatingHUDManager.shared.hide()
+            }
+            Menu("Quotas") {
+                Picker("Quotas", selection: $settings.hudBarQuotas) {
+                    ForEach(FloatingBarQuotas.allCases) { quotas in
+                        Text(quotas.title).tag(quotas)
+                    }
                 }
             }
-            .opacity(isHovered ? 1.0 : 0.35)
+            Menu("Profiles and providers") {
+                FloatingBarSelection()
+            }
+            Divider()
+            Toggle("Always on top", isOn: $settings.hudAlwaysOnTop)
+            Button("Hide floating bar") { FloatingHUDManager.shared.hide() }
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 2)
+    }
+
+    private var barDragGesture: some Gesture {
+        DragGesture(minimumDistance: 3)
+            .onChanged { _ in FloatingHUDManager.shared.dragBar() }
+            .onEnded { _ in FloatingHUDManager.shared.finishDraggingBar() }
     }
 
     // MARK: - Expanded Mode (Card Dashboard)
@@ -123,30 +84,30 @@ public struct FloatingHUDView: View {
         VStack(alignment: .leading, spacing: 10) {
             // Header
             HStack(alignment: .center, spacing: 6) {
-                // Pulsing/Health Dot
+                // Quota status dot.
                 Circle()
-                    .fill(healthColor(percent: store.minRemainingPercent ?? 100))
+                    .fill(UIColors.quotaStatusColor(percent: store.minRemainingPercent.map(Double.init)))
                     .frame(width: 7, height: 7)
 
                 Text("SEEUSAGE")
                     .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(settings.currentTheme.accent)
+                    .foregroundStyle(UIColors.textPrimary)
 
                 Text("HUD")
                     .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(settings.currentTheme.textMuted)
+                    .foregroundStyle(UIColors.textMuted)
 
                 Spacer()
 
                 if let lowest = store.minRemainingPercent {
                     Text("\(lowest)%")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(healthColor(percent: lowest))
+                        .foregroundStyle(UIColors.quotaTextColor(percent: Double(lowest)))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
                         .background(
                             RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                                .fill(healthColor(percent: lowest).opacity(0.15))
+                                .fill(UIColors.track)
                         )
                 }
 
@@ -185,7 +146,7 @@ public struct FloatingHUDView: View {
             }
 
             Rectangle()
-                .fill(settings.currentTheme.border)
+                .fill(UIColors.border)
                 .frame(height: 1)
 
             // Codex Section
@@ -194,7 +155,7 @@ public struct FloatingHUDView: View {
                     HStack {
                         Text("CODEX")
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundStyle(settings.currentTheme.textMuted)
+                            .foregroundStyle(UIColors.textMuted)
                         Spacer()
                     }
 
@@ -205,14 +166,14 @@ public struct FloatingHUDView: View {
                             HStack {
                                 Text(profile.name)
                                     .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(settings.currentTheme.textPrimary)
+                                    .foregroundStyle(UIColors.textPrimary)
                                 Spacer()
                                 Text("syncing...")
                                     .font(.system(size: 9, design: .monospaced))
-                                    .foregroundStyle(settings.currentTheme.textMuted)
+                                    .foregroundStyle(UIColors.textMuted)
                             }
                             .padding(6)
-                            .background(Color.white.opacity(0.03))
+                            .background(UIColors.surface.opacity(0.65))
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                     }
@@ -225,7 +186,7 @@ public struct FloatingHUDView: View {
                     HStack {
                         Text("ANTIGRAVITY (ROUTED MODELS)")
                             .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                            .foregroundStyle(settings.currentTheme.cyan)
+                            .foregroundStyle(UIColors.textMuted)
                         Spacer()
                     }
 
@@ -247,13 +208,13 @@ public struct FloatingHUDView: View {
             HStack {
                 Text(timeAgoString(from: store.lastUpdated))
                     .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundStyle(settings.currentTheme.textMuted.opacity(0.7))
+                    .foregroundStyle(UIColors.textMuted)
 
                 Spacer()
 
                 Text("drag to move")
                     .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundStyle(settings.currentTheme.textMuted.opacity(0.5))
+                    .foregroundStyle(UIColors.textMuted)
             }
         }
         .frame(width: 250)
@@ -265,7 +226,7 @@ public struct FloatingHUDView: View {
             HStack {
                 Text(name)
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(settings.currentTheme.textPrimary)
+                    .foregroundStyle(UIColors.textPrimary)
                 Spacer()
             }
 
@@ -274,20 +235,20 @@ public struct FloatingHUDView: View {
                     HStack {
                         Text(window.label)
                             .font(.system(size: 9.5, design: .monospaced))
-                            .foregroundStyle(settings.currentTheme.textSecondary)
+                            .foregroundStyle(UIColors.textSecondary)
 
                         Spacer()
 
                         if let resets = window.resetsAt {
                             Text(WatchDashboard.countdownString(until: resets))
                                 .font(.system(size: 8.5, design: .monospaced))
-                                .foregroundStyle(settings.currentTheme.textMuted)
+                                .foregroundStyle(UIColors.textMuted)
                         }
 
                         if let pct = window.remainingPercent {
                             Text("\(Int(round(pct)))%")
                                 .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                                .foregroundStyle(healthColor(percent: Int(round(pct))))
+                                .foregroundStyle(UIColors.quotaTextColor(percent: pct))
                         }
                     }
 
@@ -300,10 +261,10 @@ public struct FloatingHUDView: View {
         .padding(7)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.white.opacity(0.03))
+                .fill(UIColors.surface.opacity(0.65))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(settings.currentTheme.border.opacity(0.5), lineWidth: 1)
+                        .stroke(UIColors.border.opacity(0.5), lineWidth: 1)
                 )
         )
     }
@@ -315,11 +276,11 @@ public struct FloatingHUDView: View {
 
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(UIColors.track)
                     .frame(width: w, height: height)
 
                 Capsule()
-                    .fill(healthColor(percent: Int(round(percent))))
+                    .fill(UIColors.quotaFillColor(percent: percent, accent: settings.currentTheme.uiAccent))
                     .frame(width: fillWidth, height: height)
             }
         }
@@ -337,7 +298,7 @@ public struct FloatingHUDView: View {
             Image(systemName: icon)
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(
-                    active ? settings.currentTheme.accent : settings.currentTheme.textMuted
+                    active ? settings.currentTheme.uiAccent : UIColors.textMuted
                 )
                 .rotationEffect(.degrees(isSpinning ? 360 : 0))
                 .animation(
@@ -351,16 +312,6 @@ public struct FloatingHUDView: View {
         .help(help)
     }
 
-    private func healthColor(percent: Int) -> Color {
-        if percent <= 15 {
-            return settings.currentTheme.red
-        } else if percent <= 40 {
-            return settings.currentTheme.amber
-        } else {
-            return settings.currentTheme.green
-        }
-    }
-
     private func timeAgoString(from date: Date?) -> String {
         guard let date = date else { return "never synced" }
         let seconds = Int(Date().timeIntervalSince(date))
@@ -369,24 +320,5 @@ public struct FloatingHUDView: View {
         }
         let mins = seconds / 60
         return "\(mins)m ago"
-    }
-}
-
-// MARK: - NSVisualEffectView Wrapper
-struct VisualEffectBlur: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
     }
 }

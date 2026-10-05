@@ -133,6 +133,32 @@ public final class SettingsStore {
         }
     }
 
+    public var hudBarOrientation: FloatingBarOrientation {
+        didSet {
+            Self.defaults.set(hudBarOrientation.rawValue, forKey: "hudBarOrientation")
+            UserDefaults.standard.set(hudBarOrientation.rawValue, forKey: "hudBarOrientation")
+            postDistributedChange("app.seeusage.hudSettingsChanged")
+        }
+    }
+
+    public var hudBarQuotas: FloatingBarQuotas {
+        didSet {
+            Self.defaults.set(hudBarQuotas.rawValue, forKey: "hudBarQuotas")
+            UserDefaults.standard.set(hudBarQuotas.rawValue, forKey: "hudBarQuotas")
+            postDistributedChange("app.seeusage.hudSettingsChanged")
+        }
+    }
+
+    public var hudBarHiddenItems: Set<String> {
+        didSet {
+            guard oldValue != hudBarHiddenItems else { return }
+            let items = hudBarHiddenItems.sorted()
+            Self.defaults.set(items, forKey: "hudBarHiddenItems")
+            UserDefaults.standard.set(items, forKey: "hudBarHiddenItems")
+            postDistributedChange("app.seeusage.hudSettingsChanged")
+        }
+    }
+
     public var refreshIntervalMinutes: Int {
         didSet {
             Self.defaults.set(refreshIntervalMinutes, forKey: "refreshIntervalMinutes")
@@ -231,12 +257,21 @@ public final class SettingsStore {
 
         self.hudCompactMode = prefs.object(forKey: "hudCompactMode") as? Bool
             ?? fallback.object(forKey: "hudCompactMode") as? Bool
-            ?? false
+            ?? true
 
         let op = prefs.double(forKey: "hudOpacity") != 0
             ? prefs.double(forKey: "hudOpacity")
             : fallback.double(forKey: "hudOpacity")
         self.hudOpacity = op > 0 ? op : 0.88
+
+        self.hudBarOrientation = FloatingBarOrientation(rawValue:
+            prefs.string(forKey: "hudBarOrientation") ?? fallback.string(forKey: "hudBarOrientation") ?? "horizontal"
+        ) ?? .horizontal
+        self.hudBarQuotas = FloatingBarQuotas(rawValue:
+            prefs.string(forKey: "hudBarQuotas") ?? fallback.string(forKey: "hudBarQuotas") ?? "both"
+        ) ?? .both
+        self.hudBarHiddenItems = Set(prefs.stringArray(forKey: "hudBarHiddenItems")
+            ?? fallback.stringArray(forKey: "hudBarHiddenItems") ?? [])
 
         let interval = prefs.integer(forKey: "refreshIntervalMinutes") != 0
             ? prefs.integer(forKey: "refreshIntervalMinutes")
@@ -321,6 +356,20 @@ public final class SettingsStore {
             if let opacity = Self.defaults.object(forKey: "hudOpacity") as? Double,
                opacity != self.hudOpacity {
                 self.hudOpacity = opacity
+            }
+            if let raw = Self.defaults.string(forKey: "hudBarOrientation"),
+               let orientation = FloatingBarOrientation(rawValue: raw),
+               orientation != self.hudBarOrientation {
+                self.hudBarOrientation = orientation
+            }
+            if let raw = Self.defaults.string(forKey: "hudBarQuotas"),
+               let quotas = FloatingBarQuotas(rawValue: raw),
+               quotas != self.hudBarQuotas {
+                self.hudBarQuotas = quotas
+            }
+            if let items = Self.defaults.stringArray(forKey: "hudBarHiddenItems"),
+               Set(items) != self.hudBarHiddenItems {
+                self.hudBarHiddenItems = Set(items)
             }
         }
 
