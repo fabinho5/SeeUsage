@@ -119,7 +119,7 @@ struct FloatingQuotaItem: Identifiable, Equatable {
 }
 
 enum FloatingBarLayout {
-    static let cornerRadius: CGFloat = 18
+    static let cornerRadius: CGFloat = NativeGlassStyle.cornerRadius
     static let horizontalPadding: CGFloat = 14
     static let verticalPadding: CGFloat = 10
     static let itemSpacing: CGFloat = 12

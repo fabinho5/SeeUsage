@@ -114,7 +114,7 @@ public struct UsagePopoverView: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Divider().opacity(0.6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if settings.codexProfiles.isEmpty,
@@ -133,15 +133,15 @@ public struct UsagePopoverView: View {
                         ForEach(settings.orderedDisplayProfiles) { profile in
                             if profile.provider == .codex {
                                 profileSection(profile: profile, snapshot: store.snapshots[profile.id], provider: "Codex")
-                                Divider()
+                                Divider().opacity(0.6)
                             } else if let snapshot = store.snapshots[profile.id] {
                                 profileSection(profile: profile, snapshot: snapshot, provider: "Antigravity")
-                                Divider()
+                                Divider().opacity(0.6)
                             }
                         }
                         if let claudeUsage = store.claudeUsageSnapshot {
                             if !settings.codexProfiles.isEmpty || store.snapshots[SettingsStore.antigravityProfileID] != nil {
-                                Divider()
+                                Divider().opacity(0.6)
                             }
                             claudeUsageSection(claudeUsage)
                         }
@@ -168,11 +168,11 @@ public struct UsagePopoverView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
-            Divider()
+            Divider().opacity(0.6)
             footer
         }
         .frame(width: 360, height: 470)
-        .modifier(NativeGlassSurface(material: .popover))
+        .overlay { GlassEdgeHighlight() }
         .confirmationDialog(
             "Use a banked reset?",
             isPresented: $isConfirmingReset,
@@ -214,6 +214,21 @@ public struct UsagePopoverView: View {
                 .buttonStyle(.bordered)
                 .help("Refresh usage")
             }
+            Button {
+                if settings.hudEnabled {
+                    FloatingHUDManager.shared.hide()
+                } else {
+                    settings.hudCompactMode = true
+                    FloatingHUDManager.shared.show()
+                }
+            } label: {
+                Image(systemName: settings.hudEnabled ? "rectangle.on.rectangle.fill" : "rectangle.on.rectangle")
+                    .foregroundStyle(settings.hudEnabled ? settings.currentTheme.uiAccent : Color.primary)
+            }
+            .buttonStyle(.bordered)
+            .help(settings.hudEnabled ? "Hide floating bar" : "Show floating bar")
+            .accessibilityLabel("Floating bar")
+            .accessibilityValue(settings.hudEnabled ? "On" : "Off")
             Button {
                 SettingsWindowManager.shared.show()
             } label: {
@@ -309,7 +324,7 @@ public struct UsagePopoverView: View {
                 Spacer()
                 if let percent = window.remainingPercent {
                     Text("\(Int(percent.rounded()))%")
-                        .font(.subheadline.monospacedDigit())
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
                         .foregroundStyle(UIColors.quotaTextColor(percent: percent))
                 } else {
                     Text("—").foregroundStyle(.secondary)

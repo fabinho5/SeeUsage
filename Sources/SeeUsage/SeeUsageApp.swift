@@ -78,7 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
-        popover.contentViewController = NSHostingController(rootView: UsagePopoverView())
+        popover.contentViewController = NativeGlassHostingController(
+            rootView: AnyView(UsagePopoverView()), material: .popover
+        )
     }
 
     @objc private func statusItemClicked() {

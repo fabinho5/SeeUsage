@@ -23,16 +23,7 @@ struct FloatingQuotaBar: View {
         }
         .padding(.horizontal, FloatingBarLayout.horizontalPadding)
         .padding(.vertical, FloatingBarLayout.verticalPadding)
-        .overlay {
-            RoundedRectangle(cornerRadius: FloatingBarLayout.cornerRadius, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.10), .white.opacity(0.28)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 0.5
-                )
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
+        .overlay { GlassEdgeHighlight() }
     }
 
     private var horizontalRows: some View {
