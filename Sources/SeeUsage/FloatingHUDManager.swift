@@ -6,6 +6,7 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
     public static let shared = FloatingHUDManager()
 
     private var panel: NSPanel?
+    private var measuredBarContent: (key: FloatingBarLayout.SizeKey, size: NSSize)?
     private var dragStart: (mouse: NSPoint, origin: NSPoint)?
     private static let framePrefKey = "app.seeusage.floatingHUDFrame"
 
@@ -157,6 +158,18 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
         }
     }
 
+    func updateBarContentSize(_ size: NSSize, for key: FloatingBarLayout.SizeKey) {
+        let settings = SettingsStore.shared
+        guard settings.hudCompactMode,
+              key == FloatingBarLayout.SizeKey(items: barItems, orientation: settings.hudBarOrientation,
+                                               quotas: settings.hudBarQuotas) else { return }
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
+        let measured = NSSize(width: ceil(size.width), height: ceil(size.height))
+        guard measuredBarContent?.key != key || measuredBarContent?.size != measured else { return }
+        measuredBarContent = (key, measured)
+        applySettings()
+    }
+
     private func calculateInitialFrame() -> NSRect {
         if let saved = UserDefaults.standard.string(forKey: Self.framePrefKey) {
             let rect = NSRectFromString(saved)
@@ -180,21 +193,32 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
         return NSRect(x: x, y: y, width: defaultWidth, height: defaultHeight)
     }
 
+    private var barItems: [FloatingQuotaItem] {
+        let settings = SettingsStore.shared
+        let store = UsageStore.shared
+        return FloatingQuotaItem.items(
+            profiles: settings.orderedDisplayProfiles,
+            snapshots: store.snapshots,
+            claudeUsage: store.claudeUsageSnapshot,
+            refreshIntervalMinutes: settings.refreshIntervalMinutes,
+            quotas: settings.hudBarQuotas,
+            hiddenItems: settings.hudBarHiddenItems
+        )
+    }
+
     private var desiredContentSize: NSSize {
         let settings = SettingsStore.shared
         if settings.hudCompactMode {
-            let store = UsageStore.shared
-            let items = FloatingQuotaItem.items(
-                profiles: settings.orderedDisplayProfiles,
-                snapshots: store.snapshots,
-                claudeUsage: store.claudeUsageSnapshot,
-                refreshIntervalMinutes: settings.refreshIntervalMinutes,
-                quotas: settings.hudBarQuotas,
-                hiddenItems: settings.hudBarHiddenItems
-            )
+            let items = barItems
             let screen = panel.flatMap { panel in
                 NSScreen.screens.first { $0.visibleFrame.intersects(panel.frame) }
             } ?? NSScreen.main
+            let key = FloatingBarLayout.SizeKey(items: items, orientation: settings.hudBarOrientation, quotas: settings.hudBarQuotas)
+            if let measured = measuredBarContent, measured.key == key {
+                return FloatingBarLayout.fittedSize(measured.size,
+                    availableWidth: screen?.visibleFrame.width ?? 1200,
+                    availableHeight: screen?.visibleFrame.height ?? 800)
+            }
             return FloatingBarLayout.size(
                 items: items,
                 availableWidth: screen?.visibleFrame.width ?? 1200,
@@ -215,7 +239,8 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
             frame.origin.y = min(max(frame.origin.y, screen.visibleFrame.minY), screen.visibleFrame.maxY - size.height)
         }
         guard panel.frame != frame else { return }
-        panel.setFrame(frame, display: true, animate: true)
+        panel.setFrame(frame, display: true)
+        panel.contentView?.layoutSubtreeIfNeeded()
         savePanelPosition()
     }
 

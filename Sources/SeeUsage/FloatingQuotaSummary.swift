@@ -119,6 +119,22 @@ struct FloatingQuotaItem: Identifiable, Equatable {
 }
 
 enum FloatingBarLayout {
+    struct SizeKey: Hashable {
+        private struct Profile: Hashable {
+            let id: String
+            let label: String
+        }
+        private let profiles: [Profile]
+        private let orientation: FloatingBarOrientation
+        private let quotas: FloatingBarQuotas
+
+        init(items: [FloatingQuotaItem], orientation: FloatingBarOrientation, quotas: FloatingBarQuotas) {
+            profiles = items.map { Profile(id: $0.id, label: $0.label) }
+            self.orientation = orientation
+            self.quotas = quotas
+        }
+    }
+
     static let cornerRadius: CGFloat = NativeGlassStyle.cornerRadius
     static let horizontalPadding: CGFloat = 14
     static let verticalPadding: CGFloat = 10
@@ -127,7 +143,7 @@ enum FloatingBarLayout {
     static let quotaSpacing: CGFloat = 10
     static let periodSpacing: CGFloat = 3
     static let periodWidth: CGFloat = 18
-    static let percentageWidth: CGFloat = 34
+    static let percentageWidth: CGFloat = 38
     static let horizontalRowHeight: CGFloat = 36
     static let verticalRowHeight: CGFloat = 20
 
@@ -146,6 +162,11 @@ enum FloatingBarLayout {
         orientation: FloatingBarOrientation = .horizontal,
         quotas: FloatingBarQuotas = .both
     ) -> NSSize {
+        fittedSize(naturalSize(items: items, orientation: orientation, quotas: quotas),
+                   availableWidth: availableWidth, availableHeight: availableHeight)
+    }
+
+    static func naturalSize(items: [FloatingQuotaItem], orientation: FloatingBarOrientation, quotas: FloatingBarQuotas) -> NSSize {
         // The view and panel share the same spacing and fixed percentage slots.
         let contentWidth: CGFloat
         let contentHeight: CGFloat
@@ -159,9 +180,12 @@ enum FloatingBarLayout {
             } + CGFloat(max(0, items.count - 1)) * (2 * itemSpacing + 1)
             contentHeight = horizontalRowHeight
         }
-        return NSSize(
-            width: min(contentWidth + 2 * horizontalPadding, max(120, availableWidth - 32)),
-            height: min(contentHeight + 2 * verticalPadding, max(56, availableHeight - 32))
-        )
+        return NSSize(width: contentWidth + 2 * horizontalPadding,
+                      height: contentHeight + 2 * verticalPadding)
+    }
+
+    static func fittedSize(_ naturalSize: NSSize, availableWidth: CGFloat, availableHeight: CGFloat) -> NSSize {
+        NSSize(width: min(ceil(naturalSize.width), max(120, availableWidth - 32)),
+               height: min(ceil(naturalSize.height), max(56, availableHeight - 32)))
     }
 }

@@ -5,25 +5,53 @@ struct FloatingQuotaBar: View {
     let items: [FloatingQuotaItem]
     let orientation: FloatingBarOrientation
     let quotas: FloatingBarQuotas
+    var onContentSizeChange: (@MainActor (NSSize) -> Void)? = nil
 
     var body: some View {
+        let naturalSize = FloatingBarLayout.naturalSize(items: items, orientation: orientation, quotas: quotas)
+        let key = FloatingBarLayout.SizeKey(items: items, orientation: orientation, quotas: quotas)
         Group {
             if orientation == .horizontal {
-                ViewThatFits(in: .horizontal) {
-                    horizontalRows.fixedSize()
-                    ScrollView(.horizontal) { horizontalRows.fixedSize() }
-                        .frame(height: FloatingBarLayout.horizontalRowHeight)
-                }
+                ScrollView(.horizontal) { measuredHorizontalRows }
+                    .frame(idealWidth: naturalSize.width - 2 * FloatingBarLayout.horizontalPadding,
+                           minHeight: FloatingBarLayout.horizontalRowHeight,
+                           maxHeight: FloatingBarLayout.horizontalRowHeight, alignment: .topLeading)
             } else {
-                ViewThatFits(in: .vertical) {
-                    verticalRows.fixedSize()
-                    ScrollView(.vertical) { verticalRows }
-                }
+                ScrollView([.horizontal, .vertical]) { measuredVerticalRows }
+                    .frame(idealWidth: naturalSize.width - 2 * FloatingBarLayout.horizontalPadding,
+                           idealHeight: naturalSize.height - 2 * FloatingBarLayout.verticalPadding,
+                           alignment: .topLeading)
             }
         }
+        // Selection changes must discard the previous scroll offset and layout state.
+        // Quota refreshes keep the same identity.
+        .id(key)
+        .scrollIndicators(.hidden)
+        .transaction { $0.animation = nil }
         .padding(.horizontal, FloatingBarLayout.horizontalPadding)
         .padding(.vertical, FloatingBarLayout.verticalPadding)
+        .clipShape(RoundedRectangle(cornerRadius: NativeGlassStyle.cornerRadius, style: .continuous))
         .overlay { GlassEdgeHighlight() }
+        .onPreferenceChange(FloatingBarContentSizePreference.self) { contentSize in
+            guard contentSize.width > 0, contentSize.height > 0 else { return }
+            let size = NSSize(width: contentSize.width + 2 * FloatingBarLayout.horizontalPadding,
+                              height: contentSize.height + 2 * FloatingBarLayout.verticalPadding)
+            Task { @MainActor in onContentSizeChange?(size) }
+        }
+    }
+
+    private var measuredHorizontalRows: some View {
+        horizontalRows.fixedSize().background(contentSizeReader)
+    }
+
+    private var measuredVerticalRows: some View {
+        verticalRows.fixedSize().background(contentSizeReader)
+    }
+
+    private var contentSizeReader: some View {
+        GeometryReader { geometry in
+            Color.clear.preference(key: FloatingBarContentSizePreference.self, value: geometry.size)
+        }
     }
 
     private var horizontalRows: some View {
@@ -99,5 +127,14 @@ struct FloatingQuotaBar: View {
                 .accessibilityValue(value.percent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
             }
         }
+    }
+}
+
+private struct FloatingBarContentSizePreference: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        value = CGSize(width: max(value.width, next.width), height: max(value.height, next.height))
     }
 }

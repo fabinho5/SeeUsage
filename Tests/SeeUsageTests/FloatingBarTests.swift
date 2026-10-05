@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import SeeUsage
@@ -112,6 +113,12 @@ final class FloatingBarTests: XCTestCase {
         XCTAssertEqual(size.height, FloatingBarLayout.horizontalRowHeight + 2 * FloatingBarLayout.verticalPadding)
     }
 
+    func testPercentageSlotFitsOneHundredPercentWithoutTruncation() {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        let textWidth = ("100%" as NSString).size(withAttributes: [.font: font]).width
+        XCTAssertTrue(textWidth <= FloatingBarLayout.percentageWidth)
+    }
+
     func testSingleQuotaSelectionsDoNotMixPeriods() {
         let profile = UsageProfile(provider: .codex, name: "Personal")
         for selection in [FloatingBarQuotas.fiveHours, .weekly] {
@@ -174,6 +181,55 @@ final class FloatingBarTests: XCTestCase {
         }
     }
 
+    func testAddingAndRemovingProvidersResizesTheOpenNativePanel() {
+        _ = NSApplication.shared
+        for orientation in FloatingBarOrientation.allCases {
+            for quotas in FloatingBarQuotas.allCases {
+                let model = LiveFloatingBarModel()
+                let items = ["Personal", "Work", "Antigravity", "Claude", "Another provider"].enumerated().map { index, name in
+                    FloatingQuotaItem(id: "\(index)", label: name,
+                                      values: quotas.periods.map { FloatingQuotaValue(period: $0, percent: 100) })
+                }
+                let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 140, height: 56),
+                                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                panel.isReleasedWhenClosed = false
+                var measuredSize = NSSize.zero
+                let controller = FloatingGlassHostingController(rootView: AnyView(
+                    LiveFloatingBarView(model: model, orientation: orientation, quotas: quotas) { [weak panel] size in
+                        measuredSize = size
+                        panel?.setContentSize(FloatingBarLayout.fittedSize(size, availableWidth: 400, availableHeight: 160))
+                        panel?.contentView?.layoutSubtreeIfNeeded()
+                    }
+                ))
+                panel.contentViewController = controller
+                // Remove the middle provider, then add it back without replacing the panel.
+                let selections = [items, [items[0], items[1], items[3]], items,
+                                  [items[3]], [], Array(items.prefix(2)), items,
+                                  [items[1], items[2], items[3]], items]
+                for selection in selections {
+                    model.items = selection
+                    controller.children[0].view.layoutSubtreeIfNeeded()
+                    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                    let naturalSize = FloatingBarLayout.size(items: model.items, availableWidth: 10_000,
+                                                            availableHeight: 10_000, orientation: orientation, quotas: quotas)
+                    XCTAssertEqual(measuredSize, naturalSize)
+                    let expectedFrame = FloatingBarLayout.fittedSize(naturalSize, availableWidth: 400, availableHeight: 160)
+                    XCTAssertEqual(panel.frame.size, expectedFrame)
+                    XCTAssertEqual(controller.view.frame.size, expectedFrame)
+                    XCTAssertEqual(controller.children[0].view.frame.size, expectedFrame)
+                }
+                // Pending layout work from intermediate selections must not win over the final selection.
+                for selection in selections { model.items = selection }
+                controller.children[0].view.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                let finalSize = FloatingBarLayout.size(items: items, availableWidth: 400, availableHeight: 160,
+                                                       orientation: orientation, quotas: quotas)
+                XCTAssertEqual(panel.frame.size, finalSize)
+                panel.close()
+            }
+        }
+    }
+
     private func windows(_ percentages: [Double]) -> [UsageWindow] {
         percentages.enumerated().map {
             UsageWindow(id: "\($0.offset)", label: $0.offset % 2 == 0 ? "5 h" : "7 days", remainingPercent: $0.element, durationMinutes: $0.offset % 2 == 0 ? 300 : 10_080)
@@ -187,5 +243,21 @@ final class FloatingBarTests: XCTestCase {
         error: String? = nil
     ) -> UsageSnapshot {
         UsageSnapshot(profileID: profile.id, windows: windows(percentages), fetchedAt: fetchedAt ?? now, error: error)
+    }
+}
+
+@MainActor @Observable
+private final class LiveFloatingBarModel {
+    var items: [FloatingQuotaItem] = []
+}
+
+private struct LiveFloatingBarView: View {
+    @Bindable var model: LiveFloatingBarModel
+    let orientation: FloatingBarOrientation
+    let quotas: FloatingBarQuotas
+    let onSizeChange: @MainActor (NSSize) -> Void
+
+    var body: some View {
+        FloatingQuotaBar(items: model.items, orientation: orientation, quotas: quotas, onContentSizeChange: onSizeChange)
     }
 }

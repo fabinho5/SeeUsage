@@ -19,18 +19,10 @@ public struct FloatingHUDView: View {
             }
         }
         .onHover { hovering in
+            guard !settings.hudCompactMode else { return }
             withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
                 isHovered = hovering
             }
-        }
-        .onChange(of: settings.hudBarOrientation) { _, _ in
-            FloatingHUDManager.shared.applySettings()
-        }
-        .onChange(of: settings.hudBarQuotas) { _, _ in
-            FloatingHUDManager.shared.applySettings()
-        }
-        .onChange(of: barItems.map { "\($0.id):\($0.label)" }) { _, _ in
-            FloatingHUDManager.shared.applySettings()
         }
     }
 
@@ -47,8 +39,12 @@ public struct FloatingHUDView: View {
 
     // MARK: - Floating percentage bar
     private var compactHUDContent: some View {
-        FloatingQuotaBar(items: barItems, orientation: settings.hudBarOrientation, quotas: settings.hudBarQuotas)
-            .gesture(barDragGesture, including: .gesture)
+        let items = barItems
+        let key = FloatingBarLayout.SizeKey(items: items, orientation: settings.hudBarOrientation, quotas: settings.hudBarQuotas)
+        return FloatingQuotaBar(items: items, orientation: settings.hudBarOrientation, quotas: settings.hudBarQuotas) { size in
+            FloatingHUDManager.shared.updateBarContentSize(size, for: key)
+        }
+        .gesture(barDragGesture, including: .gesture)
         .contextMenu {
             Menu("Orientation") {
                 Picker("Orientation", selection: $settings.hudBarOrientation) {
