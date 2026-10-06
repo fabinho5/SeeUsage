@@ -712,6 +712,19 @@ public struct SettingsView: View {
                         FloatingBarSelection()
                     }
                 }
+                Toggle("Show Lume companion", isOn: Binding(
+                    get: { settings.companionEnabled },
+                    set: { enabled in
+                        settings.companionEnabled = enabled
+                        CompanionManager.shared.applySettings()
+                    }
+                ))
+                if settings.companionEnabled {
+                    Toggle("Let Lume move around", isOn: $settings.companionWanders)
+                    Text("Checks quotas every 5 minutes. Drag to move; right-click for options.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Picker("Accent color", selection: $settings.selectedThemeID) {
                     ForEach(appearancePickerThemes) { theme in
                         HStack(spacing: 8) {

@@ -15,10 +15,20 @@ fi
 
 BIN_PATH="${ROOT_DIR}/.build/release/SeeUsage"
 DIST_DIR="${ROOT_DIR}/dist"
-APP_DIR="${DIST_DIR}/SeeUsage.app"
+# Keep development bundles out of Spotlight and the macOS Apps list.
+APP_DIR="${DIST_DIR}/build.noindex/SeeUsage.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+
+LEGACY_APP_DIR="${DIST_DIR}/SeeUsage.app"
+if [[ -d "${LEGACY_APP_DIR}" ]]; then
+    LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    if [[ -x "${LSREGISTER}" ]]; then
+        "${LSREGISTER}" -u "${LEGACY_APP_DIR}" 2>/dev/null || true
+    fi
+    rm -rf "${LEGACY_APP_DIR}"
+fi
 
 echo "==> Packaging ${APP_DIR}..."
 rm -rf "${APP_DIR}"
@@ -26,6 +36,8 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 cp "${BIN_PATH}" "${MACOS_DIR}/SeeUsage"
 chmod +x "${MACOS_DIR}/SeeUsage"
+
+cp -R "${ROOT_DIR}/Sources/SeeUsage/Resources/Companion" "${RESOURCES_DIR}/Companion"
 
 cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>

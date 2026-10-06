@@ -109,6 +109,24 @@ public final class SettingsStore {
         }
     }
 
+    public var companionEnabled: Bool {
+        didSet {
+            guard oldValue != companionEnabled else { return }
+            Self.defaults.set(companionEnabled, forKey: "companionEnabled")
+            UserDefaults.standard.set(companionEnabled, forKey: "companionEnabled")
+            postDistributedChange("app.seeusage.companionSettingsChanged")
+        }
+    }
+
+    public var companionWanders: Bool {
+        didSet {
+            guard oldValue != companionWanders else { return }
+            Self.defaults.set(companionWanders, forKey: "companionWanders")
+            UserDefaults.standard.set(companionWanders, forKey: "companionWanders")
+            postDistributedChange("app.seeusage.companionSettingsChanged")
+        }
+    }
+
     public var hudAlwaysOnTop: Bool {
         didSet {
             Self.defaults.set(hudAlwaysOnTop, forKey: "hudAlwaysOnTop")
@@ -251,6 +269,13 @@ public final class SettingsStore {
             ?? fallback.object(forKey: "hudEnabled") as? Bool
             ?? false
 
+        self.companionEnabled = prefs.object(forKey: "companionEnabled") as? Bool
+            ?? fallback.object(forKey: "companionEnabled") as? Bool
+            ?? false
+        self.companionWanders = prefs.object(forKey: "companionWanders") as? Bool
+            ?? fallback.object(forKey: "companionWanders") as? Bool
+            ?? true
+
         self.hudAlwaysOnTop = prefs.object(forKey: "hudAlwaysOnTop") as? Bool
             ?? fallback.object(forKey: "hudAlwaysOnTop") as? Bool
             ?? true
@@ -332,6 +357,16 @@ public final class SettingsStore {
                icon != self.menuBarShowIcon {
                 self.menuBarShowIcon = icon
             }
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("app.seeusage.companionSettingsChanged"), object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            if let enabled = Self.defaults.object(forKey: "companionEnabled") as? Bool,
+               enabled != self.companionEnabled { self.companionEnabled = enabled }
+            if let wanders = Self.defaults.object(forKey: "companionWanders") as? Bool,
+               wanders != self.companionWanders { self.companionWanders = wanders }
         }
 
         // Listen for live HUD settings updates across processes

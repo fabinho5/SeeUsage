@@ -50,10 +50,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if SettingsStore.shared.hudEnabled {
             FloatingHUDManager.shared.show()
         }
+        CompanionManager.shared.applySettings()
 
         Task { @MainActor in
             await UsageStore.shared.refresh()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        CompanionManager.shared.stop()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

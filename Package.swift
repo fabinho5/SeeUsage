@@ -12,7 +12,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "SeeUsage",
-            path: "Sources/SeeUsage"
+            path: "Sources/SeeUsage",
+            resources: [.copy("Resources/Companion")]
         ),
         .testTarget(
             name: "SeeUsageTests",

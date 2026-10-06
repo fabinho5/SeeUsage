@@ -34,12 +34,12 @@ cd SeeUsage
 ./scripts/install.sh
 ```
 
-This compiles the release binary, installs `SeeUsage.app` into `~/Applications`, and links the `seeusage` CLI command to `~/.local/bin/seeusage`.
+This compiles the release binary, installs `SeeUsage.app` into `/Applications` (or `~/Applications` if the system folder is not writable), registers it with macOS, and links the `seeusage` CLI command to `~/.local/bin/seeusage`.
 
 To start the menu bar app:
 
 ```bash
-open ~/Applications/SeeUsage.app
+open -a SeeUsage
 ```
 
 ## Requirements
@@ -90,7 +90,7 @@ swift run SeeUsage
 # Run the interactive watch dashboard
 swift run SeeUsage watch
 
-# Package the release macOS application bundle (dist/SeeUsage.app)
+# Package the release macOS application bundle (dist/build.noindex/SeeUsage.app)
 ./scripts/build_app.sh
 ```
 
@@ -109,8 +109,8 @@ Sources/
     NotificationManager.swift # Threshold-based notifications and reset alerts
     Theme.swift               # Color palettes for UI and terminal rendering
 scripts/
-  build_app.sh                # Compiles and bundles dist/SeeUsage.app
-  install.sh                  # Builds and installs to ~/Applications and ~/.local/bin
+  build_app.sh                # Compiles and bundles dist/build.noindex/SeeUsage.app
+  install.sh                  # Installs to /Applications (fallback ~/Applications) and ~/.local/bin
 assets/                       # Demo media and screen recordings
 ```
 
