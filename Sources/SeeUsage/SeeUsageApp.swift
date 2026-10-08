@@ -32,13 +32,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popover: NSPopover!
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
+    private var refreshKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProcessInfo.processInfo.disableAutomaticTermination("SeeUsage Menu Bar Active")
         setupStatusItem()
         setupPopover()
+        setupRefreshShortcut()
         observeStore()
         observeOpenSettings()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updatePopoverSize), name: .uiProfileChanged, object: SettingsStore.shared
+        )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(closePopoverForSettings),
@@ -58,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let refreshKeyMonitor { NSEvent.removeMonitor(refreshKeyMonitor) }
         CompanionManager.shared.stop()
     }
 
@@ -79,13 +85,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 360, height: 470)
+        popover.contentSize = SettingsStore.shared.uiProfile.popoverSize
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
         popover.contentViewController = NativeGlassHostingController(
             rootView: AnyView(UsagePopoverView()), material: .popover
         )
+    }
+
+    @objc private func updatePopoverSize(_ notification: Notification) {
+        popover.contentSize = SettingsStore.shared.uiProfile.popoverSize
     }
 
     @objc private func statusItemClicked() {
@@ -100,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func popoverDidShow(_ notification: Notification) {
+        requestUsageRefresh()
         if let window = popover.contentViewController?.view.window {
             window.isOpaque = false
             window.backgroundColor = .clear
@@ -124,6 +135,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private func requestUsageRefresh() {
+        Task { @MainActor in
+            await UsageStore.shared.refresh(forceAfterCurrent: true)
+        }
+    }
+
+    private func setupRefreshShortcut() {
+        refreshKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, RefreshShortcut.matches(event),
+                  self.popover.isShown || NSApp.isActive else { return event }
+            self.requestUsageRefresh()
+            return nil
+        }
+    }
+
     func popoverDidClose(_ notification: Notification) {
         if let localClickMonitor {
             NSEvent.removeMonitor(localClickMonitor)
@@ -144,6 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let store = UsageStore.shared
         let settings = SettingsStore.shared
         let minPct = store.minRemainingPercent
+        button.font = settings.menuBarDisplayMode == .accountPercentages
+            ? NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            : NSFont.menuBarFont(ofSize: 0)
+        button.toolTip = "SeeUsage"
+        button.setAccessibilityLabel("SeeUsage")
 
         switch settings.menuBarDisplayMode {
         case .percent:
@@ -197,6 +228,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.image = dotImg
             button.imagePosition = .imageOnly
             button.title = ""
+
+        case .stackedBars, .stackedPercentages, .accountPercentages:
+            let items = settings.menuBarItems
+            let tooltip = MenuBarQuotaItem.tooltip(items: items, quota: settings.menuBarPreferences.quota,
+                                                  mode: settings.menuBarDisplayMode)
+            button.toolTip = tooltip
+            button.setAccessibilityLabel(tooltip)
+            if settings.menuBarDisplayMode == .accountPercentages {
+                let text = items.isEmpty ? "–" : items.map(\.percentText).joined(separator: " · ")
+                let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+                button.image = settings.menuBarShowIcon
+                    ? NSImage(systemSymbolName: "gauge.with.needle", accessibilityDescription: "SeeUsage")?.withSymbolConfiguration(config)
+                    : nil
+                button.imagePosition = settings.menuBarShowIcon ? .imageLeading : .noImage
+                button.title = (settings.menuBarShowIcon ? " " : "") + text
+            } else {
+                button.image = MenuBarIndicators.image(items: items, mode: settings.menuBarDisplayMode)
+                button.imagePosition = .imageOnly
+                button.title = ""
+            }
         }
     }
 
@@ -292,6 +343,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.updateButtonContent()
+            }
+        }
+
+        for name in ["app.seeusage.profilePresentationChanged", "app.seeusage.preferencesChanged"] {
+            DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name(name), object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.updateButtonContent() }
             }
         }
     }

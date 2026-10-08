@@ -159,6 +159,9 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sen
     case dual = "dual"            // Dual Quotas (e.g. cx: 92% · ag: 81%)
     case gauge = "gauge"          // Mini Graphic Gauge (e.g. ■■■□ 47%)
     case iconOnly = "iconOnly"    // Status Dot / Icon Only
+    case stackedBars
+    case stackedPercentages
+    case accountPercentages
 
     public var id: String { rawValue }
 
@@ -168,6 +171,9 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sen
         case .dual: return "Dual Quotas"
         case .gauge: return "Mini Gauge"
         case .iconOnly: return "Icon Only"
+        case .stackedBars: return "Stacked Bars"
+        case .stackedPercentages: return "Stacked Percentages"
+        case .accountPercentages: return "Account Percentages"
         }
     }
 
@@ -177,6 +183,9 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sen
         case .dual: return "Shows primary Codex and Antigravity quotas side by side"
         case .gauge: return "Renders a high-resolution micro progress bar and percentage"
         case .iconOnly: return "Ultra-clean status indicator with health color dot"
+        case .stackedBars: return "Small stacked bars for your selected accounts or providers"
+        case .stackedPercentages: return "Two percentages per column for your selected accounts or providers"
+        case .accountPercentages: return "Selected account or provider percentages side by side"
         }
     }
 
@@ -186,7 +195,14 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sen
         case .dual: return "cx + ag"
         case .gauge: return "bar + %"
         case .iconOnly: return "icon"
+        case .stackedBars: return "bars"
+        case .stackedPercentages: return "stacked %"
+        case .accountPercentages: return "accounts %"
         }
+    }
+
+    var usesAccountSelection: Bool {
+        [.stackedBars, .stackedPercentages, .accountPercentages].contains(self)
     }
 }
 

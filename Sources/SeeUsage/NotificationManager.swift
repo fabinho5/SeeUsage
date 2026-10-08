@@ -96,10 +96,10 @@ public final class NotificationManager: NSObject, UNUserNotificationCenterDelega
 
             if profileID == SettingsStore.antigravityProfileID {
                 serviceName = "Antigravity"
-                profileName = "Antigravity"
+                profileName = settings.displayName(for: profileID, defaultName: "Antigravity")
             } else if let p = settings.codexProfiles.first(where: { $0.id == profileID }) {
                 serviceName = "Codex"
-                profileName = p.name
+                profileName = settings.displayName(for: p)
             } else {
                 serviceName = "Codex"
                 profileName = "Profile"

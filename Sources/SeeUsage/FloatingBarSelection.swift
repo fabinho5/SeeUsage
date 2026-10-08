@@ -20,12 +20,14 @@ struct FloatingBarSelection: View {
         Group {
             Toggle("Codex", isOn: settings.barVisibilityBinding(for: FloatingBarVisibility.codex))
             ForEach(settings.orderedDisplayProfiles.filter { $0.provider == .codex }) { profile in
-                Toggle(profile.name, isOn: settings.barVisibilityBinding(for: profile.id.uuidString))
+                Toggle(settings.displayName(for: profile), isOn: settings.barVisibilityBinding(for: profile.id.uuidString))
                     .padding(.leading, 16)
                     .disabled(settings.hudBarHiddenItems.contains(FloatingBarVisibility.codex))
             }
-            Toggle("Antigravity", isOn: settings.barVisibilityBinding(for: FloatingBarVisibility.antigravity))
-            Toggle("Claude Code", isOn: settings.barVisibilityBinding(for: FloatingBarVisibility.claude))
+            Toggle(settings.displayName(for: SettingsStore.antigravityProfileID, defaultName: "Antigravity"),
+                   isOn: settings.barVisibilityBinding(for: FloatingBarVisibility.antigravity))
+            Toggle(settings.displayName(for: ClaudeUsageSnapshot.profileID, defaultName: "Claude Code"),
+                   isOn: settings.barVisibilityBinding(for: FloatingBarVisibility.claude))
         }
     }
 }

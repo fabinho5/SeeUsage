@@ -234,11 +234,13 @@ public enum CLIHandler {
     private static func printMenuBarModes() {
         let settings = SettingsStore.shared
         print("\n" + bold("// SEEUSAGE MENU BAR DISPLAY MODES") + "\n")
+        let idWidth = MenuBarDisplayMode.allCases.map { $0.rawValue.count }.max() ?? 12
+        let titleWidth = MenuBarDisplayMode.allCases.map { $0.title.count }.max() ?? 16
         for mode in MenuBarDisplayMode.allCases {
             let isCurrent = settings.menuBarDisplayMode == mode
             let mark = isCurrent ? green("[✓ ACTIVE]") : dim("[        ]")
-            let idStr = cyan(mode.rawValue.padding(toLength: 12, withPad: " ", startingAt: 0))
-            let nameStr = bold(mode.title.padding(toLength: 16, withPad: " ", startingAt: 0))
+            let idStr = cyan(mode.rawValue.padding(toLength: idWidth, withPad: " ", startingAt: 0))
+            let nameStr = bold(mode.title.padding(toLength: titleWidth, withPad: " ", startingAt: 0))
             let subStr = dim(mode.subtitle)
             print("  \(mark) \(idStr) \(nameStr) \(subStr)")
         }
@@ -257,12 +259,19 @@ public enum CLIHandler {
             resolvedMode = .gauge
         case "icon", "icononly", "dot":
             resolvedMode = .iconOnly
+        case "stackedbars", "bars":
+            resolvedMode = .stackedBars
+        case "stackedpercentages", "stacked":
+            resolvedMode = .stackedPercentages
+        case "accountpercentages", "accounts":
+            resolvedMode = .accountPercentages
         default:
             resolvedMode = MenuBarDisplayMode(rawValue: clean)
         }
 
         guard let mode = resolvedMode else {
-            print("\n" + red("✗") + " Unknown menu bar mode '" + target + "'. Available: percent, dual, gauge, iconOnly\n")
+            print("\n" + red("✗") + " Unknown menu bar mode '" + target + "'. Available: "
+                  + MenuBarDisplayMode.allCases.map(\.rawValue).joined(separator: ", ") + "\n")
             return
         }
 
@@ -765,7 +774,7 @@ public enum CLIHandler {
           settings, config    Open SeeUsage settings window directly
           themes, --themes    List all available terminal and developer themes
           theme <id>          Set active theme by ID (e.g. `seeusage theme ocean`)
-          mode [id]           Set or list menu bar display style (percent, dual, gauge, iconOnly)
+          mode [id]           Set or list menu bar display style (run mode to see all styles)
           hud [action]        Control floating desktop HUD widget (toggle, compact, pin, etc.)
           notify [action]     Manage notification alerts or dispatch test notification
           analytics, history  View 7-day quota trends, peak burn hours, and profile share

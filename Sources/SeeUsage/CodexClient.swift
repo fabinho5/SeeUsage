@@ -100,8 +100,7 @@ public enum CodexClient {
                 }
             }
 
-            // Sort windows by duration (e.g. 5h before 7 dias)
-            windows.sort { ($0.durationMinutes ?? 0) < ($1.durationMinutes ?? 0) }
+            windows = CodexQuotaPresentation.ordered(windows)
 
             // Extract rateLimitResetCredits (Banked Resets)
             var availableCreditsCount = 0
@@ -192,9 +191,7 @@ public enum CodexClient {
         case 10080:
             return "7 days"
         default:
-            if minutes % 10080 == 0 {
-                return "\(minutes / 10080) days"
-            } else if minutes % 1440 == 0 {
+            if minutes % 1440 == 0 {
                 return "\(minutes / 1440) days"
             } else if minutes % 60 == 0 {
                 return "\(minutes / 60) h"

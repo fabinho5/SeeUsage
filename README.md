@@ -2,6 +2,8 @@
 
 A lightweight macOS menu bar app and CLI for tracking AI coding quotas across Codex profiles, Antigravity, and Claude Code.
 
+This is [fabinho5/SeeUsage](https://github.com/fabinho5/SeeUsage), a fork of [tiagoc211/SeeUsage](https://github.com/tiagoc211/SeeUsage).
+
 <p align="center">
   <img src="./assets/seeusage-demo.gif" alt="SeeUsage demo" width="850">
 </p>
@@ -15,11 +17,16 @@ SeeUsage monitors your remaining AI coding allowances across local CLI accounts 
 - **Codex multi-profile tracking**: Simultaneously queries quotas across `~/.codex` and `~/.codex-profiles/*` without switching active accounts or reading credentials.
 - **Antigravity quota monitoring**: Reads active `agy` rate limits across model families routed via Antigravity (Gemini, Claude & GPT models included in your Antigravity plan, distinct from direct Anthropic/Claude provider accounts).
 - **Claude Code usage (optional)**: Enable usage sync in Settings → Providers to show Claude Code's 5-hour and weekly subscription quotas. SeeUsage reads Claude Code's local status-line data and preserves an existing custom status line.
-- **Customizable menu bar**: Choose between Lowest Quota (`⚡ 47%`), Dual Quotas (`cx: 92% · ag: 81%`), Mini Gauge, or Icon Only, with color-coded quota health.
+- **Customizable menu bar**: Choose Lowest Quota, Dual Quotas, Mini Gauge, Icon Only, Stacked Bars, Stacked Percentages, or Account Percentages. In **Settings → General → Menu Bar**, the three account styles let you select accounts/providers, show each account or group by provider, and choose session, weekly, or lowest quota. With one selected account or provider, Stacked Bars shows the 5-hour session on top and the weekly quota below. Compact indicators follow your account order; hover to identify each reading.
 - **Interactive watch dashboard (`seeusage watch`)**: Real-time terminal TUI with second-by-second countdowns to quota resets and theme switching.
 - **Floating percentage bar**: Enable Settings → General → Appearance → Show floating bar for a draggable bar with per-profile quotas and no progress bars. Choose horizontal or vertical orientation, 5-hour/weekly/both quotas, and which providers or individual Codex profiles appear, in Settings or the bar’s right-click menu. Hiding a provider preserves its profile selections. Selected profiles remain visible with “—” when quota data is unavailable. The horizontal bar groups each profile name above its percentages and only scrolls when the screen cannot fit the content. Its position and preferences are saved; pin and hide actions are available in the right-click menu. The bar uses native, untinted Liquid Glass on macOS 26+, with frosted materials on older versions. A detailed HUD remains available through the CLI.
 - **Banked Codex resets**: See available reset credits in the popover and confirm before activating one; the CLI can also list and consume credits.
 - **Quota Analytics & Usage History**: Lightweight local history in `~/.config/seeusage/history.json`, with terminal summaries and CSV/JSON export for consumption and reset records.
+- **Quota planning hints and markers**: The popover compares remaining quota with the allowance for the window's time left. For example, 97% left with 4h 19m until a 5-hour reset is about 11 percentage points in reserve. Green/red markers show that time-based budget on the bar; reserve means ahead of budget, deficit means behind. Deficit messages estimate time until exhaustion from average consumption since the current window began. Weekly hints also show windows until reset and estimated session capacity, with fractional counts once at least three complete, well-observed sessions establish their typical weekly cost. Pacing and window counts work immediately from fresh quota/reset data; session capacity learns separately per account and model scope. Tooltips retain the longer observed-history forecast, which needs 30 minutes for short windows or three days for weekly quotas. Estimates exclude stale/error data and can change with your usage.
+- **Codex quota order**: The main Session and Weekly quotas appear together, followed by the separate GPT reserve pool. Raw quota IDs, scopes, and account data stay intact.
+- **Account display controls**: Click an account header to collapse or expand its quota rows. Collapsed accounts retain a short quota summary. Use the header's `…` menu → Change display name to set a visual alias, or Use original name to restore it. Display names and collapsed sections survive restarts. Aliases appear in the popover, floating bar/HUD, profile choices, and activity details without changing account names, profile folders, authentication, or usage history.
+- **Automatic refresh and shortcut**: Opening the menu bar popover immediately refreshes usage. Press **Command-R** in the popover, Settings, or another active SeeUsage window to refresh manually. Requests share the same refresh queue; cached quotas stay visible while new readings load.
+- **UI profiles**: Fresh installations use Compact by default. Choose Compact or Classic in Settings → General → Appearance → UI profile. Compact keeps the current smaller text, tighter spacing, and inline hints that wrap when needed. Classic restores the original popover dimensions, larger bars, and reset lines below each bar, adding the same planning hints underneath. Both profiles share account display names, collapsed sections, history, notifications, and all other features. The selection persists and applies immediately; accent colors and floating bar settings remain independent.
 - **Native system notifications**: Custom alerts when any quota drops below a configurable threshold and when limits reset back to 100%.
 - **Fast shell prompt integration**: Instant cached one-liner (`seeusage --mini --cached`) for Starship, Zsh, and tmux prompts, plus JSON output (`--json`).
 - **Local and private**: Runs entirely on your machine. Never stores, reads, or transmits tokens or authentication secrets.
@@ -29,7 +36,7 @@ SeeUsage monitors your remaining AI coding allowances across local CLI accounts 
 Clone the repository and run the installation script:
 
 ```bash
-git clone https://github.com/tiagoc211/SeeUsage.git
+git clone https://github.com/fabinho5/SeeUsage.git
 cd SeeUsage
 ./scripts/install.sh
 ```
@@ -57,7 +64,7 @@ seeusage watch               # Live interactive TUI with real-time countdown to 
 seeusage settings            # Open macOS preferences window
 seeusage themes              # List available terminal themes
 seeusage theme ocean         # Apply a terminal theme (e.g. emerald, ocean, tokyo-night)
-seeusage mode dual           # Set menu bar style (percent, dual, gauge, iconOnly)
+seeusage mode stackedBars    # Compact bars for selected accounts; run `seeusage mode` for all styles
 seeusage notify test         # Send an instant test notification
 seeusage notify 15           # Set low-quota notification threshold to 15%
 seeusage hud toggle          # Toggle floating desktop HUD widget on/off
@@ -77,12 +84,16 @@ SeeUsage communicates with official CLI tools already authenticated on your syst
 - **Codex**: Spawns an isolated `codex app-server --stdio` process for each configured profile path and requests rate limits via JSON-RPC (`account/rateLimits/read`). It never accesses `auth.json` directly.
 - **Antigravity**: Runs `agy -p "/usage" --output-format text` to read active quota metrics and reset timestamps without consuming inference tokens.
 - **Caching**: Aggregated metrics are stored in `~/.config/seeusage/cache.json` for zero-latency prompt queries and instant popover rendering.
+- **History**: Retains up to 20,000 snapshots so frequent polling can collect enough history for weekly forecasts. Session estimates use the latest 14 days. Stored history dates use numeric Unix timestamps to preserve sampling precision; existing ISO 8601 history remains readable, and CSV/JSON exports continue to use ISO 8601 dates.
 
 ## Development
 
 ```bash
 # Build debug executable
 swift build
+
+# Run the test suite
+swift test
 
 # Run the CLI directly
 swift run SeeUsage
@@ -116,8 +127,8 @@ assets/                       # Demo media and screen recordings
 
 ## Contributing
 
-Contributions, bug reports, and feature suggestions are welcome. Feel free to open an issue or submit a pull request.
+Contributions, bug reports, and feature suggestions are welcome in [this fork’s issues](https://github.com/fabinho5/SeeUsage/issues) and [pull requests](https://github.com/fabinho5/SeeUsage/pulls).
 
 ## License
 
-This repository does not currently contain a license file. See [Issues](https://github.com/tiagoc211/SeeUsage/issues) to inquire about licensing.
+This repository does not currently contain a license file. See [Issues](https://github.com/fabinho5/SeeUsage/issues) to inquire about licensing.

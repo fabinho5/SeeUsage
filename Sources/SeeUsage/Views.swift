@@ -103,20 +103,24 @@ public enum Formatters {
 
 public struct UsagePopoverView: View {
     @Bindable private var store = UsageStore.shared
-    @Bindable private var settings = SettingsStore.shared
+    @Bindable private var settings: SettingsStore
     @Bindable private var analytics = AnalyticsManager.shared
     @State private var pendingReset: PendingReset?
     @State private var isConfirmingReset = false
     @State private var resultMessage: String?
 
-    public init() {}
+    public init(settings: SettingsStore = .shared) {
+        self.settings = settings
+    }
+
+    private var layout: UIProfile { settings.uiProfile }
 
     public var body: some View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.6)
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: layout.contentSpacing) {
                     if settings.codexProfiles.isEmpty,
                        store.snapshots[SettingsStore.antigravityProfileID] == nil,
                        store.claudeUsageSnapshot == nil {
@@ -161,17 +165,19 @@ public struct UsagePopoverView: View {
                                 $0.timestamp >= Date().addingTimeInterval(-85 * 86_400)
                             },
                             codexProfiles: settings.codexProfiles,
-                            accent: settings.currentTheme.uiAccent
+                            displayNames: settings.profilePresentation.displayNames,
+                            accent: settings.currentTheme.uiAccent,
+                            isCollapsed: $settings.activityCollapsed
                         )
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, layout.contentHorizontalPadding)
+                .padding(.vertical, layout.contentVerticalPadding)
             }
             Divider().opacity(0.6)
             footer
         }
-        .frame(width: 360, height: 470)
+        .frame(width: layout.popoverSize.width, height: layout.popoverSize.height)
         .overlay { GlassEdgeHighlight() }
         .confirmationDialog(
             "Use a banked reset?",
@@ -183,7 +189,7 @@ public struct UsagePopoverView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will use one reset credit on \(pendingReset?.profile.name ?? "this profile").")
+            Text("This will use one reset credit on \(pendingReset.map { settings.displayName(for: $0.profile) } ?? "this profile").")
         }
         .alert("Banked Reset", isPresented: Binding(
             get: { resultMessage != nil },
@@ -199,8 +205,8 @@ public struct UsagePopoverView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("SeeUsage").font(.headline)
-                Text("Remaining quota").font(.caption).foregroundStyle(.secondary)
+                Text("SeeUsage").font(layout.titleFont)
+                Text("Remaining quota").font(layout.detailFont).foregroundStyle(.secondary)
             }
             Spacer()
             if store.isRefreshing {
@@ -212,7 +218,7 @@ public struct UsagePopoverView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
-                .help("Refresh usage")
+                .help("Refresh usage (⌘R)")
             }
             Button {
                 if settings.hudEnabled {
@@ -237,130 +243,196 @@ public struct UsagePopoverView: View {
             .buttonStyle(.bordered)
             .help("Settings")
         }
-        .padding(14)
+        .controlSize(layout.controlSize)
+        .padding(.horizontal, 14)
+        .padding(.vertical, layout.headerVerticalPadding)
     }
 
     @ViewBuilder
     private func profileSection(profile: UsageProfile, snapshot: UsageSnapshot?, provider: String) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(profile.name).font(.headline)
-                Spacer()
-                if let plan = snapshot?.plan { Text(plan).font(.caption).foregroundStyle(.secondary) }
-            }
+        VStack(alignment: .leading, spacing: layout.sectionSpacing) {
+            AccountSectionHeader(profileID: profile.id, originalName: profile.name,
+                                 detail: snapshot?.plan, summary: profileSummary(snapshot), settings: settings)
 
-            if let snapshot {
-                if let error = snapshot.error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if snapshot.isStale {
-                    Label("Showing old data", systemImage: "clock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                ForEach(snapshot.windows) { window in
-                    quotaRow(window, provider: provider)
-                }
-
-                if provider == "Codex" {
-                    let credits = snapshot.bankedCredits.filter { $0.status.lowercased() == "available" }
-                    let creditCount = max(snapshot.availableResetCredits ?? 0, credits.count)
-                    if creditCount > 0 {
-                        Menu {
-                            ForEach(credits) { credit in
-                                Button(Formatters.bankedCreditTitle(credit)) {
-                                    pendingReset = PendingReset(profile: profile, credit: credit)
-                                    isConfirmingReset = true
-                                }
-                            }
-                        } label: {
-                            Label("Use banked reset (\(creditCount))", systemImage: "bolt.circle")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .disabled(snapshot.error != nil || snapshot.isStale)
+            if !settings.profilePresentation.isCollapsed(profile.id) {
+                if let snapshot {
+                    if let error = snapshot.error {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if snapshot.isStale {
+                        Label("Showing old data", systemImage: "clock")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                }
 
-                if snapshot.windows.isEmpty && snapshot.error == nil {
-                    Text("No quota windows returned.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    ForEach(provider == "Codex" ? CodexQuotaPresentation.ordered(snapshot.windows) : snapshot.windows) { window in
+                        quotaRow(window, profileID: profile.id, provider: provider, windows: snapshot.windows,
+                                 fetchedAt: snapshot.fetchedAt, hasError: snapshot.error != nil)
+                    }
+
+                    if provider == "Codex" {
+                        let credits = snapshot.bankedCredits.filter { $0.status.lowercased() == "available" }
+                        let creditCount = max(snapshot.availableResetCredits ?? 0, credits.count)
+                        if creditCount > 0 {
+                            Menu {
+                                ForEach(credits) { credit in
+                                    Button(Formatters.bankedCreditTitle(credit)) {
+                                        pendingReset = PendingReset(profile: profile, credit: credit)
+                                        isConfirmingReset = true
+                                    }
+                                }
+                            } label: {
+                                Label("Use banked reset (\(creditCount))", systemImage: "bolt.circle")
+                            }
+                            .menuStyle(.borderlessButton)
+                            .font(layout.actionFont)
+                            .controlSize(layout.controlSize)
+                            .disabled(snapshot.error != nil || snapshot.isStale)
+                        }
+                    }
+
+                    if snapshot.windows.isEmpty && snapshot.error == nil {
+                        Text("No quota windows returned.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if store.isRefreshing {
+                    ProgressView("Loading usage…").controlSize(.small)
+                } else {
+                    Text("No usage data yet.").font(.caption).foregroundStyle(.secondary)
                 }
-            } else if store.isRefreshing {
-                ProgressView("Loading usage…").controlSize(.small)
-            } else {
-                Text("No usage data yet.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+        .padding(.vertical, layout.sectionVerticalPadding)
     }
 
     private func claudeUsageSection(_ snapshot: ClaudeUsageSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Claude Code").font(.headline)
-                Spacer()
-                Text("Updated \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            ForEach(snapshot.windows) { window in
-                quotaRow(window, provider: "Claude Code")
+        VStack(alignment: .leading, spacing: layout.sectionSpacing) {
+            AccountSectionHeader(profileID: ClaudeUsageSnapshot.profileID, originalName: "Claude Code",
+                                 detail: "Updated \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))",
+                                 summary: Date().timeIntervalSince(snapshot.updatedAt) <= Double(max(600, settings.refreshIntervalMinutes * 120))
+                                     ? AccountSectionHeader.quotaSummary(windows: snapshot.windows) : "Outdated", settings: settings)
+            if !settings.profilePresentation.isCollapsed(ClaudeUsageSnapshot.profileID) {
+                ForEach(snapshot.windows) { window in
+                    quotaRow(window, profileID: ClaudeUsageSnapshot.profileID, provider: "Claude Code",
+                             windows: snapshot.windows, fetchedAt: snapshot.updatedAt)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+        .padding(.vertical, layout.sectionVerticalPadding)
     }
 
-    private func quotaRow(_ window: UsageWindow, provider: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text([window.scope, window.label].compactMap { $0 }.joined(separator: " · "))
-                    .font(.subheadline)
-                Spacer()
-                if let percent = window.remainingPercent {
-                    Text("\(Int(percent.rounded()))%")
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(UIColors.quotaTextColor(percent: percent))
+    private func profileSummary(_ snapshot: UsageSnapshot?) -> String? {
+        guard let snapshot else { return "Unavailable" }
+        if snapshot.error != nil { return "Unavailable" }
+        if snapshot.isStale { return "Outdated" }
+        return AccountSectionHeader.quotaSummary(windows: snapshot.windows)
+    }
+
+    private func quotaRow(
+        _ window: UsageWindow, profileID: UUID, provider: String,
+        windows: [UsageWindow], fetchedAt: Date, hasError: Bool = false
+    ) -> some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let hints = analytics.quotaHints(
+                for: window, profileID: profileID, service: provider,
+                windows: windows, fetchedAt: fetchedAt, hasError: hasError, now: context.date
+            )
+            VStack(alignment: .leading, spacing: layout.rowSpacing) {
+                if layout == .compact {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(spacing: 4) {
+                            quotaLabel(window, provider: provider)
+                            quotaPercent(window, includesLeft: true)
+                        }
+                        .font(layout.quotaFont)
+                        Spacer(minLength: 4)
+                        resetLabel(window)
+                    }
                 } else {
-                    Text("—").foregroundStyle(.secondary)
+                    HStack(alignment: .firstTextBaseline) {
+                        quotaLabel(window, provider: provider)
+                        Spacer(minLength: 4)
+                        quotaPercent(window, includesLeft: false)
+                            .font(layout.quotaFont.weight(.semibold))
+                    }
+                    .font(layout.quotaFont)
                 }
-            }
-            if let percent = window.remainingPercent {
-                ProgressView(value: max(0, min(100, percent)), total: 100)
-                    .progressViewStyle(QuotaProgressStyle(
-                        color: UIColors.quotaFillColor(percent: percent, accent: settings.currentTheme.uiAccent)
-                    ))
-            }
-            if let reset = window.resetsAt {
-                Text("Resets \(Formatters.resetDescription(for: reset))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let percent = window.remainingPercent {
+                    QuotaGauge(percent: percent,
+                               color: UIColors.quotaFillColor(percent: percent, accent: settings.currentTheme.uiAccent),
+                               height: layout.barHeight, pacing: hints?.pacing)
+                }
+                if layout == .classic { resetLabel(window) }
+                if let hints {
+                    QuotaHintView(hints: hints, uiProfile: layout)
+                }
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func quotaLabel(_ window: UsageWindow, provider: String) -> some View {
+        Text(quotaTitle(window, provider: provider))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(quotaTitle(window, provider: provider))
+    }
+
+    @ViewBuilder private func quotaPercent(_ window: UsageWindow, includesLeft: Bool) -> some View {
+        if let percent = window.remainingPercent {
+            Text("\(Int(percent.rounded()))%\(includesLeft ? " left" : "")")
+                .monospacedDigit()
+                .foregroundStyle(UIColors.quotaTextColor(percent: percent))
+                .fixedSize()
+        } else {
+            Text("—").foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private func resetLabel(_ window: UsageWindow) -> some View {
+        if let reset = window.resetsAt {
+            Text("Resets \(Formatters.resetDescription(for: reset))")
+                .font(layout.detailFont)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+        }
+    }
+
+    private func quotaTitle(_ window: UsageWindow, provider: String) -> String {
+        if provider == "Codex", CodexQuotaPresentation.isReserve(window) { return "GPT reserve" }
+        if layout == .classic {
+            return [window.scope, window.label].compactMap { $0 }.joined(separator: " · ")
+        }
+        let period: String
+        if FloatingQuotaPeriod.fiveHours.matches(window) { period = "Session" }
+        else if FloatingQuotaPeriod.weekly.matches(window) { period = "Weekly" }
+        else { period = window.label }
+        guard let scope = window.scope, scope.lowercased() != "codex" else { return period }
+        let name = scope == "base_model_inference" ? "Base model" : scope.replacingOccurrences(of: "Claude and GPT", with: "Claude/GPT")
+        return "\(name) · \(period)"
     }
 
     private var footer: some View {
         HStack {
             if let date = store.lastUpdated {
                 Text("Updated \(date.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption)
+                    .font(layout.detailFont)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Not updated yet").font(.caption).foregroundStyle(.secondary)
+                Text("Not updated yet").font(layout.detailFont).foregroundStyle(.secondary)
             }
             Spacer()
             Button("Quit SeeUsage") { NSApp.terminate(nil) }
                 .buttonStyle(.plain)
-                .font(.caption)
+                .font(layout.detailFont)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, layout.footerVerticalPadding)
     }
 
     private func activate(_ item: PendingReset) {
@@ -374,24 +446,6 @@ public struct UsagePopoverView: View {
     }
 }
 
-// macOS's default linear style doesn't reliably apply a custom tint.
-private struct QuotaProgressStyle: ProgressViewStyle {
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        GeometryReader { geometry in
-            Capsule()
-                .fill(UIColors.track)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(color)
-                        .frame(width: geometry.size.width * CGFloat(configuration.fractionCompleted ?? 0))
-                }
-        }
-        .frame(height: 8)
-    }
-}
-
 private struct ActivityProfileUsage: Identifiable {
     let id: String
     let profileName: String
@@ -402,7 +456,9 @@ private struct ActivityHeatmap: View {
     let dailyConsumption: [DailyConsumption]
     let historySnapshots: [QuotaHistorySnapshot]
     let codexProfiles: [UsageProfile]
+    let displayNames: [UUID: String]
     let accent: Color
+    @Binding var isCollapsed: Bool
     @State private var hoveredDate: Date?
     @State private var selectedDate: Date?
 
@@ -481,88 +537,106 @@ private struct ActivityHeatmap: View {
         } ?? "Last 12 weeks"
 
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Activity")
-                    .font(.subheadline.weight(.medium))
-                Spacer()
-                Text(hoverSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isCollapsed.toggle()
+                    hoveredDate = nil
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                    Text("Activity")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Text(isCollapsed ? "Last 12 weeks" : hoverSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("\(isCollapsed ? "Expand" : "Collapse") Activity")
+            .accessibilityLabel("Activity")
+            .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
 
-            HStack(spacing: 3) {
-                ForEach(0..<12, id: \.self) { week in
-                    VStack(spacing: 3) {
-                        ForEach(0..<7, id: \.self) { day in
-                            let date = calendar.date(byAdding: .day, value: week * 7 + day, to: firstWeekStart) ?? today
-                            let usage = usageByDay[date] ?? 0
-                            let intensity = activityIntensity(for: usage, peak: peakUsage)
+            if !isCollapsed {
+                HStack(spacing: 3) {
+                    ForEach(0..<12, id: \.self) { week in
+                        VStack(spacing: 3) {
+                            ForEach(0..<7, id: \.self) { day in
+                                let date = calendar.date(byAdding: .day, value: week * 7 + day, to: firstWeekStart) ?? today
+                                let usage = usageByDay[date] ?? 0
+                                let intensity = activityIntensity(for: usage, peak: peakUsage)
 
-                            Button {
-                                selectedDate = selectedDate == date ? nil : date
-                            } label: {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(activityColor(for: intensity))
-                                    .overlay {
-                                        if selectedDate == date {
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .strokeBorder(Color.primary.opacity(0.8), lineWidth: 1)
+                                Button {
+                                    selectedDate = selectedDate == date ? nil : date
+                                } label: {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(activityColor(for: intensity))
+                                        .overlay {
+                                            if selectedDate == date {
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .strokeBorder(Color.primary.opacity(0.8), lineWidth: 1)
+                                            }
                                         }
-                                    }
-                                    .frame(width: 12, height: 12)
+                                        .frame(width: 12, height: 12)
+                                }
+                                .buttonStyle(.plain)
+                                .contentShape(Rectangle())
+                                .onHover { isHovering in
+                                    if isHovering { hoveredDate = date }
+                                }
+                                .accessibilityLabel(activityDescription(for: date, usage: usage))
+                                .accessibilityHint("Show usage by profile")
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+
+                if let selectedDate {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text(Formatters.dayMonthYear(selectedDate))
+                                .font(.caption.weight(.medium))
+                            Spacer()
+                            Button {
+                                self.selectedDate = nil
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption2.weight(.semibold))
                             }
                             .buttonStyle(.plain)
-                            .contentShape(Rectangle())
-                            .onHover { isHovering in
-                                if isHovering { hoveredDate = date }
-                            }
-                            .accessibilityLabel(activityDescription(for: date, usage: usage))
-                            .accessibilityHint("Show usage by profile")
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-
-            if let selectedDate {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Text(Formatters.dayMonthYear(selectedDate))
-                            .font(.caption.weight(.medium))
-                        Spacer()
-                        Button {
-                            self.selectedDate = nil
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Close activity details")
-                    }
-
-                    if selectedProfileUsage.isEmpty {
-                        Text("No recorded usage")
-                            .font(.caption)
                             .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(selectedProfileUsage) { entry in
-                            HStack {
-                                Text(entry.profileName)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text("\(entry.consumptionPercent.formatted(.number.precision(.fractionLength(0...1)))) quota pts")
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
+                            .help("Close activity details")
+                        }
+
+                        if selectedProfileUsage.isEmpty {
+                            Text("No recorded usage")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(selectedProfileUsage) { entry in
+                                HStack {
+                                    Text(UUID(uuidString: entry.id).flatMap { displayNames[$0] } ?? entry.profileName)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text("\(entry.consumptionPercent.formatted(.number.precision(.fractionLength(0...1)))) quota pts")
+                                        .monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                }
+                                .font(.caption)
                             }
-                            .font(.caption)
                         }
                     }
+                    .padding(.top, 1)
                 }
-                .padding(.top, 1)
             }
         }
         .padding(.vertical, 2)
@@ -678,7 +752,50 @@ public struct SettingsView: View {
     private var generalPreferences: some View {
         Form {
             Section("Menu Bar") {
+                Picker("Display style", selection: $settings.menuBarDisplayMode) {
+                    ForEach(MenuBarDisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                Text(settings.menuBarDisplayMode.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.menuBarDisplayMode.usesAccountSelection {
+                    if MenuBarQuotaItem.isSessionWeeklyPair(settings.menuBarItems) {
+                        LabeledContent("Bars", value: "Session (5h) above Weekly")
+                    } else {
+                        Picker("Show quota", selection: $settings.menuBarPreferences.quota) {
+                            ForEach(MenuBarQuota.allCases) { quota in
+                                Text(quota.title).tag(quota)
+                            }
+                        }
+                    }
+                    Picker("Show separately", selection: $settings.menuBarPreferences.grouping) {
+                        ForEach(MenuBarGrouping.allCases) { grouping in
+                            Text(grouping.title).tag(grouping)
+                        }
+                    }
+                    DisclosureGroup("Accounts and providers in menu bar") {
+                        MenuBarSelection(settings: settings)
+                    }
+                    LabeledContent("Preview") {
+                        MenuBarPreview(items: settings.menuBarItems, mode: settings.menuBarDisplayMode,
+                                       showIcon: settings.menuBarShowIcon)
+                            .help(MenuBarQuotaItem.tooltip(items: settings.menuBarItems,
+                                                         quota: settings.menuBarPreferences.quota,
+                                                         mode: settings.menuBarDisplayMode))
+                    }
+                    Text("Uses your account order. Hover over the menu bar indicator to identify each reading. Provider groups show their lowest selected account quota.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if settings.menuBarDisplayMode == .stackedBars {
+                        Text("With one selected account or provider, the top bar shows the 5-hour session and the bottom bar shows the weekly quota.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Show SeeUsage icon", isOn: $settings.menuBarShowIcon)
+                    .disabled([.stackedBars, .stackedPercentages, .iconOnly].contains(settings.menuBarDisplayMode))
                 Picker("Update interval", selection: $settings.refreshIntervalMinutes) {
                     Text("1 minute").tag(1)
                     Text("5 minutes").tag(5)
@@ -689,6 +806,15 @@ public struct SettingsView: View {
             }
 
             Section("Appearance") {
+                Picker("UI profile", selection: $settings.uiProfile) {
+                    ForEach(UIProfile.allCases) { profile in
+                        Text(profile.title).tag(profile)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(settings.uiProfile.description + " Both profiles share all features and account preferences.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Show floating bar", isOn: Binding(
                     get: { settings.hudEnabled },
                     set: { enabled in
@@ -816,7 +942,7 @@ public struct SettingsView: View {
                 ForEach(settings.codexProfiles) { profile in
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(profile.name)
+                            Text(settings.displayName(for: profile))
                             Text(profile.homePath ?? "No CODEX_HOME path")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -979,7 +1105,7 @@ public struct SettingsView: View {
             Image(systemName: profile.provider == .antigravity ? "sparkles" : "person.crop.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(profile.name)
+            Text(settings.displayName(for: profile))
                 .font(.system(.body, weight: .medium))
             Spacer()
             Text(profile.provider == .antigravity ? "Antigravity" : "Codex")

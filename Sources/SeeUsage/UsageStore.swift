@@ -131,6 +131,7 @@ public final class UsageStore {
         let latest = ClaudeStatusLineIntegration.loadCachedUsage()
         guard latest != claudeUsageSnapshot else { return }
         claudeUsageSnapshot = latest
+        if let latest { AnalyticsManager.shared.recordClaudeUsage(latest) }
         NotificationCenter.default.post(name: .usageStoreDidUpdate, object: nil)
     }
 

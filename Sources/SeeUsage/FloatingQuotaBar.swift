@@ -122,9 +122,13 @@ struct FloatingQuotaBar: View {
                         .foregroundStyle(value.percent.map { UIColors.quotaTextColor(percent: $0) } ?? .secondary)
                         .frame(width: FloatingBarLayout.percentageWidth, alignment: .trailing)
                 }
-                .help("\(item.label) · \(value.period.title)\(value.percent == nil ? " · Unavailable" : "")")
+                .help("\(item.label) · \(value.period.title)\(value.percent == nil ? " · Unavailable" : "")"
+                      + (value.hints.map { "\n" + $0.tooltip } ?? ""))
                 .accessibilityLabel(value.period.title)
-                .accessibilityValue(value.percent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
+                .accessibilityValue((value.percent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
+                                    + (value.hints.map { ", " + ($0.pacing?.text ?? $0.forecast.text)
+                                        + ($0.sessionText.map { ", " + $0 } ?? "")
+                                        + ($0.pacing?.windowText.map { ", " + $0 } ?? "") } ?? ""))
             }
         }
     }

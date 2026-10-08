@@ -1,6 +1,7 @@
 import Foundation
 
 public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
+    public static let profileID = UUIDHelper.deterministic(for: "seeusage:claude-code")
     public let updatedAt: Date
     public let windows: [UsageWindow]
 

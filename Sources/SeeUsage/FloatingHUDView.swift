@@ -5,41 +5,47 @@ import AppKit
 public struct FloatingHUDView: View {
     @Bindable var settings = SettingsStore.shared
     var store = UsageStore.shared
+    private var analytics = AnalyticsManager.shared
     @State private var isHovered: Bool = false
 
     public init() {}
 
     public var body: some View {
-        Group {
-            if settings.hudCompactMode {
-                compactHUDContent
-            } else {
-                expandedHUDContent
-                    .padding(10)
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            Group {
+                if settings.hudCompactMode {
+                    compactHUDContent(now: context.date)
+                } else {
+                    ScrollView { expandedHUDContent(now: context.date) }
+                        .padding(10)
+                }
             }
-        }
-        .onHover { hovering in
-            guard !settings.hudCompactMode else { return }
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
-                isHovered = hovering
+            .onHover { hovering in
+                guard !settings.hudCompactMode else { return }
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                    isHovered = hovering
+                }
             }
         }
     }
 
-    private var barItems: [FloatingQuotaItem] {
+    private func barItems(now: Date) -> [FloatingQuotaItem] {
         FloatingQuotaItem.items(
             profiles: settings.orderedDisplayProfiles,
             snapshots: store.snapshots,
             claudeUsage: store.claudeUsageSnapshot,
             refreshIntervalMinutes: settings.refreshIntervalMinutes,
             quotas: settings.hudBarQuotas,
-            hiddenItems: settings.hudBarHiddenItems
+            hiddenItems: settings.hudBarHiddenItems,
+            history: analytics.snapshots,
+            displayNames: settings.profilePresentation.displayNames,
+            now: now
         )
     }
 
     // MARK: - Floating percentage bar
-    private var compactHUDContent: some View {
-        let items = barItems
+    private func compactHUDContent(now: Date) -> some View {
+        let items = barItems(now: now)
         let key = FloatingBarLayout.SizeKey(items: items, orientation: settings.hudBarOrientation, quotas: settings.hudBarQuotas)
         return FloatingQuotaBar(items: items, orientation: settings.hudBarOrientation, quotas: settings.hudBarQuotas) { size in
             FloatingHUDManager.shared.updateBarContentSize(size, for: key)
@@ -76,7 +82,7 @@ public struct FloatingHUDView: View {
     }
 
     // MARK: - Expanded Mode (Card Dashboard)
-    private var expandedHUDContent: some View {
+    private func expandedHUDContent(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             // Header
             HStack(alignment: .center, spacing: 6) {
@@ -157,10 +163,12 @@ public struct FloatingHUDView: View {
 
                     ForEach(settings.codexProfiles) { profile in
                         if let snapshot = store.snapshots[profile.id], !snapshot.windows.isEmpty {
-                            profileHUDCard(name: profile.name, windows: snapshot.windows)
+                            profileHUDCard(name: settings.displayName(for: profile), windows: snapshot.windows, profileID: profile.id,
+                                           service: "Codex", fetchedAt: snapshot.fetchedAt,
+                                           hasError: snapshot.error != nil, now: now)
                         } else {
                             HStack {
-                                Text(profile.name)
+                                Text(settings.displayName(for: profile))
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundStyle(UIColors.textPrimary)
                                 Spacer()
@@ -180,7 +188,7 @@ public struct FloatingHUDView: View {
             if let agySnap = store.snapshots[SettingsStore.antigravityProfileID], !agySnap.windows.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("ANTIGRAVITY (ROUTED MODELS)")
+                        Text("\(settings.displayName(for: SettingsStore.antigravityProfileID, defaultName: "Antigravity").uppercased()) (ROUTED MODELS)")
                             .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                             .foregroundStyle(UIColors.textMuted)
                         Spacer()
@@ -195,9 +203,17 @@ public struct FloatingHUDView: View {
 
                     ForEach(sortedKeys, id: \.self) { scope in
                         let tag = scope.contains("Claude") ? "agy: claude & gpt" : (scope.contains("Gemini") ? "agy: gemini" : "agy: \(scope.lowercased())")
-                        profileHUDCard(name: tag, windows: grouped[scope] ?? [])
+                        profileHUDCard(name: tag, windows: grouped[scope] ?? [],
+                                       profileID: SettingsStore.antigravityProfileID, service: "Antigravity",
+                                       fetchedAt: agySnap.fetchedAt, hasError: agySnap.error != nil, now: now)
                     }
                 }
+            }
+
+            if let claude = store.claudeUsageSnapshot {
+                profileHUDCard(name: settings.displayName(for: ClaudeUsageSnapshot.profileID, defaultName: "Claude Code"), windows: claude.windows,
+                               profileID: ClaudeUsageSnapshot.profileID, service: "Claude Code",
+                               fetchedAt: claude.updatedAt, now: now)
             }
 
             // Subtle Footer
@@ -217,7 +233,10 @@ public struct FloatingHUDView: View {
     }
 
     // MARK: - Subcomponents
-    private func profileHUDCard(name: String, windows: [UsageWindow]) -> some View {
+    private func profileHUDCard(
+        name: String, windows: [UsageWindow], profileID: UUID, service: String,
+        fetchedAt: Date, hasError: Bool = false, now: Date
+    ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(name)
@@ -226,7 +245,7 @@ public struct FloatingHUDView: View {
                 Spacer()
             }
 
-            ForEach(windows.prefix(2)) { window in
+            ForEach((service == "Codex" ? CodexQuotaPresentation.ordered(windows) : windows).prefix(2)) { window in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(window.label)
@@ -248,8 +267,17 @@ public struct FloatingHUDView: View {
                         }
                     }
 
+                    let hints = analytics.quotaHints(
+                        for: window, profileID: profileID, service: service, windows: windows,
+                        fetchedAt: fetchedAt, hasError: hasError, now: now
+                    )
                     if let pct = window.remainingPercent {
-                        miniHorizontalGauge(percent: pct, width: nil, height: 3.5)
+                        QuotaGauge(percent: pct,
+                                   color: UIColors.quotaFillColor(percent: pct, accent: settings.currentTheme.uiAccent),
+                                   height: 3.5, pacing: hints?.pacing)
+                    }
+                    if let hints {
+                        QuotaHintView(hints: hints, compact: true)
                     }
                 }
             }

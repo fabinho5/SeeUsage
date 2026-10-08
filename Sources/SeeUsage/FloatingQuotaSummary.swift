@@ -58,6 +58,7 @@ enum FloatingQuotaPeriod: String {
 struct FloatingQuotaValue: Identifiable, Equatable {
     let period: FloatingQuotaPeriod
     let percent: Double?
+    var hints: QuotaHints? = nil
     var id: FloatingQuotaPeriod { period }
 }
 
@@ -73,6 +74,8 @@ struct FloatingQuotaItem: Identifiable, Equatable {
         refreshIntervalMinutes: Int,
         quotas: FloatingBarQuotas = .both,
         hiddenItems: Set<String> = [],
+        history: [QuotaHistorySnapshot] = [],
+        displayNames: [UUID: String] = [:],
         now: Date = Date()
     ) -> [FloatingQuotaItem] {
         let staleAfter = Double(max(600, refreshIntervalMinutes * 120))
@@ -84,24 +87,42 @@ struct FloatingQuotaItem: Identifiable, Equatable {
             } ?? false
             return FloatingQuotaItem(
                 id: profile.id.uuidString,
-                label: profile.name,
-                values: values(in: snapshot?.windows ?? [], quotas: quotas, isCurrent: isCurrent)
+                label: displayNames[profile.id] ?? profile.name,
+                values: values(in: snapshot?.windows ?? [], quotas: quotas, isCurrent: isCurrent,
+                               profileID: profile.id, service: profile.provider == .codex ? "Codex" : "Antigravity",
+                               fetchedAt: snapshot?.fetchedAt ?? now, history: history, now: now,
+                               staleAfter: staleAfter, maximumGap: Double(max(1_800, refreshIntervalMinutes * 120)))
             )
         }
         if let claudeUsage, !hiddenItems.contains(FloatingBarVisibility.claude) {
             items.append(FloatingQuotaItem(
                 id: "claude-code",
-                label: "Claude",
+                label: displayNames[ClaudeUsageSnapshot.profileID] ?? "Claude",
                 values: values(in: claudeUsage.windows, quotas: quotas,
-                               isCurrent: now.timeIntervalSince(claudeUsage.updatedAt) <= staleAfter)
+                               isCurrent: now.timeIntervalSince(claudeUsage.updatedAt) <= staleAfter,
+                               profileID: ClaudeUsageSnapshot.profileID, service: "Claude Code",
+                               fetchedAt: claudeUsage.updatedAt, history: history, now: now,
+                               staleAfter: staleAfter, maximumGap: Double(max(1_800, refreshIntervalMinutes * 120)))
             ))
         }
         return items
     }
 
-    private static func values(in windows: [UsageWindow], quotas: FloatingBarQuotas, isCurrent: Bool) -> [FloatingQuotaValue] {
+    private static func values(
+        in windows: [UsageWindow], quotas: FloatingBarQuotas, isCurrent: Bool,
+        profileID: UUID, service: String, fetchedAt: Date, history: [QuotaHistorySnapshot],
+        now: Date, staleAfter: TimeInterval, maximumGap: TimeInterval
+    ) -> [FloatingQuotaValue] {
         quotas.periods.map { period in
-            FloatingQuotaValue(period: period, percent: isCurrent ? lowestPercent(in: windows.filter(period.matches)) : nil)
+            let candidates = windows.filter(period.matches)
+            let window = candidates.filter { $0.remainingPercent?.isFinite == true }
+                .min { $0.remainingPercent! < $1.remainingPercent! }
+            let hints = isCurrent ? window.flatMap {
+                QuotaForecastCalculations.hints(for: $0, profileID: profileID, service: service,
+                                               windows: windows, history: history, fetchedAt: fetchedAt,
+                                               now: now, staleAfter: staleAfter, maximumSampleGap: maximumGap)
+            } : nil
+            return FloatingQuotaValue(period: period, percent: isCurrent ? lowestPercent(in: candidates) : nil, hints: hints)
         }
     }
 

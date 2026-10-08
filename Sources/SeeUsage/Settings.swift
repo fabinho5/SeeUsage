@@ -4,11 +4,14 @@ import ServiceManagement
 
 public extension Notification.Name {
     static let menuBarSettingsChanged = Notification.Name("app.seeusage.menuBarSettingsChanged")
+    static let uiProfileChanged = Notification.Name("app.seeusage.uiProfileChanged")
 }
 
 @Observable
 public final class SettingsStore {
     public static let shared = SettingsStore()
+    private let presentationDefaults: UserDefaults
+    private let usesSharedPresentationDefaults: Bool
 
     public static let antigravityProfileID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
@@ -27,6 +30,42 @@ public final class SettingsStore {
 
     public var currentTheme: AppTheme {
         ThemeRegistry.theme(for: selectedThemeID)
+    }
+
+    public var uiProfile: UIProfile {
+        didSet {
+            guard uiProfile != oldValue else { return }
+            presentationDefaults.set(uiProfile.rawValue, forKey: "uiProfile")
+            guard usesSharedPresentationDefaults else { return }
+            UserDefaults.standard.set(uiProfile.rawValue, forKey: "uiProfile")
+            NotificationCenter.default.post(name: .uiProfileChanged, object: self)
+            postDistributedChange(Notification.Name.uiProfileChanged.rawValue)
+        }
+    }
+
+    public var activityCollapsed: Bool {
+        didSet {
+            guard activityCollapsed != oldValue else { return }
+            presentationDefaults.set(activityCollapsed, forKey: "activityCollapsed")
+            guard usesSharedPresentationDefaults else { return }
+            UserDefaults.standard.set(activityCollapsed, forKey: "activityCollapsed")
+            postDistributedChange("app.seeusage.activityPresentationChanged")
+        }
+    }
+
+    var menuBarPreferences: MenuBarPreferences {
+        didSet {
+            guard menuBarPreferences != oldValue else { return }
+            if let data = try? JSONEncoder().encode(menuBarPreferences) {
+                presentationDefaults.set(data, forKey: "menuBarPreferences")
+                if usesSharedPresentationDefaults {
+                    UserDefaults.standard.set(data, forKey: "menuBarPreferences")
+                }
+            }
+            guard usesSharedPresentationDefaults else { return }
+            NotificationCenter.default.post(name: .menuBarSettingsChanged, object: self)
+            postDistributedChange(Notification.Name.menuBarSettingsChanged.rawValue)
+        }
     }
 
     public var menuBarDisplayMode: MenuBarDisplayMode {
@@ -216,7 +255,26 @@ public final class SettingsStore {
         }
     }
 
-    public init() {
+    var profilePresentation: ProfilePresentation {
+        didSet {
+            guard profilePresentation != oldValue else { return }
+            if let data = try? JSONEncoder().encode(profilePresentation) {
+                presentationDefaults.set(data, forKey: "profilePresentation")
+                if usesSharedPresentationDefaults {
+                    UserDefaults.standard.set(data, forKey: "profilePresentation")
+                }
+            }
+            guard usesSharedPresentationDefaults else { return }
+            postDistributedChange("app.seeusage.profilePresentationChanged")
+            if profilePresentation.displayNames != oldValue.displayNames {
+                postDistributedChange("app.seeusage.hudSettingsChanged")
+            }
+        }
+    }
+
+    public init(presentationDefaults: UserDefaults? = nil) {
+        self.presentationDefaults = presentationDefaults ?? Self.defaults
+        self.usesSharedPresentationDefaults = presentationDefaults == nil
         let prefs = Self.defaults
         let fallback = UserDefaults.standard
 
@@ -328,6 +386,48 @@ public final class SettingsStore {
             ?? fallback.stringArray(forKey: "profileDisplayOrder") ?? [])
             .compactMap(UUID.init(uuidString:))
         self.profileDisplayOrder = Self.normalizedDisplayOrder(storedDisplayOrder, profiles: profiles)
+        let presentationData = self.presentationDefaults.data(forKey: "profilePresentation")
+            ?? (usesSharedPresentationDefaults ? fallback.data(forKey: "profilePresentation") : nil)
+        self.profilePresentation = presentationData.flatMap { try? JSONDecoder().decode(ProfilePresentation.self, from: $0) }
+            ?? ProfilePresentation()
+        let storedUIProfile = self.presentationDefaults.string(forKey: "uiProfile")
+            ?? (usesSharedPresentationDefaults ? fallback.string(forKey: "uiProfile") : nil)
+        self.uiProfile = storedUIProfile.flatMap(UIProfile.init(rawValue:)) ?? .compact
+        self.activityCollapsed = (self.presentationDefaults.object(forKey: "activityCollapsed") as? Bool)
+            ?? (usesSharedPresentationDefaults ? fallback.object(forKey: "activityCollapsed") as? Bool : nil)
+            ?? false
+        let menuBarData = self.presentationDefaults.data(forKey: "menuBarPreferences")
+            ?? (usesSharedPresentationDefaults ? fallback.data(forKey: "menuBarPreferences") : nil)
+        self.menuBarPreferences = menuBarData.flatMap { try? JSONDecoder().decode(MenuBarPreferences.self, from: $0) }
+            ?? MenuBarPreferences()
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("app.seeusage.activityPresentationChanged"), object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.usesSharedPresentationDefaults,
+                  let collapsed = self.presentationDefaults.object(forKey: "activityCollapsed") as? Bool,
+                  collapsed != self.activityCollapsed else { return }
+            self.activityCollapsed = collapsed
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: .uiProfileChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.usesSharedPresentationDefaults,
+                  let raw = self.presentationDefaults.string(forKey: "uiProfile"),
+                  let profile = UIProfile(rawValue: raw), profile != self.uiProfile else { return }
+            self.uiProfile = profile
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("app.seeusage.profilePresentationChanged"), object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.usesSharedPresentationDefaults,
+                  let data = self.presentationDefaults.data(forKey: "profilePresentation"),
+                  let presentation = try? JSONDecoder().decode(ProfilePresentation.self, from: data),
+                  presentation != self.profilePresentation else { return }
+            self.profilePresentation = presentation
+        }
 
         // Listen for live theme updates across processes
         DistributedNotificationCenter.default().addObserver(
@@ -356,6 +456,12 @@ public final class SettingsStore {
             if let icon = Self.defaults.object(forKey: "menuBarShowIcon") as? Bool,
                icon != self.menuBarShowIcon {
                 self.menuBarShowIcon = icon
+            }
+            if self.usesSharedPresentationDefaults,
+               let data = self.presentationDefaults.data(forKey: "menuBarPreferences"),
+               let preferences = try? JSONDecoder().decode(MenuBarPreferences.self, from: data),
+               preferences != self.menuBarPreferences {
+                self.menuBarPreferences = preferences
             }
         }
 
@@ -508,6 +614,22 @@ public final class SettingsStore {
             }
             return nil
         }
+    }
+
+    func displayName(for profile: UsageProfile) -> String {
+        displayName(for: profile.id, defaultName: profile.name)
+    }
+
+    func displayName(for id: UUID, defaultName: String) -> String {
+        profilePresentation.displayName(for: id, defaultName: defaultName)
+    }
+
+    func setDisplayName(_ name: String, for id: UUID) {
+        profilePresentation.setDisplayName(name, for: id)
+    }
+
+    func setProfileCollapsed(_ collapsed: Bool, for id: UUID) {
+        profilePresentation.setCollapsed(collapsed, for: id)
     }
 
     public func moveDisplayProfile(_ profileID: UUID, relativeTo targetID: UUID) {

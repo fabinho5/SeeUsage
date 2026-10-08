@@ -45,6 +45,35 @@ final class FloatingBarTests: XCTestCase {
         )
         XCTAssertEqual(items.map(\.label), ["Missing", "Stale", "Failed", "Antigravity", "Claude"])
         XCTAssertTrue(items.allSatisfy { $0.values.allSatisfy { $0.percent == nil } })
+        XCTAssertTrue(items.allSatisfy { $0.values.allSatisfy { $0.hints == nil } })
+    }
+
+    func testForecastTooltipFollowsTheDisplayedModelScopeWithoutChangingBarSize() throws {
+        let profile = UsageProfile(provider: .antigravity, name: "Antigravity")
+        let reset = now.addingTimeInterval(3_600)
+        let windows = [UsageWindow(id: "gemini", label: "5 h", remainingPercent: 70,
+                                   durationMinutes: 300, resetsAt: reset, scope: "Gemini"),
+                       UsageWindow(id: "claude", label: "5 h", remainingPercent: 10,
+                                   durationMinutes: 300, resetsAt: reset, scope: "Claude")]
+        let history = [30.0, 20.0, 10.0].enumerated().map { step, remaining in
+            let date = now.addingTimeInterval(Double(step - 2) * 1_800)
+            return QuotaHistorySnapshot(timestamp: date, records: [
+                QuotaSampleRecord(timestamp: date, profileID: profile.id, profileName: profile.name,
+                                  service: "Antigravity", scope: "Claude", windowLabel: "5 h", windowID: "claude",
+                                  durationMinutes: 300, remainingPercent: remaining, resetsAt: reset)
+            ])
+        }
+        let snapshots = [profile.id: UsageSnapshot(profileID: profile.id, windows: windows, fetchedAt: now)]
+        let items = FloatingQuotaItem.items(profiles: [profile], snapshots: snapshots, claudeUsage: nil,
+                                            refreshIntervalMinutes: 5, history: history, now: now)
+        let plain = FloatingQuotaItem.items(profiles: [profile], snapshots: snapshots, claudeUsage: nil,
+                                            refreshIntervalMinutes: 5, now: now)
+        let value = try XCTUnwrap(items.first?.values.first)
+        XCTAssertEqual(value.percent, 10)
+        XCTAssertEqual(value.hints?.forecast.status, .deficit)
+        XCTAssertTrue(value.hints?.tooltip.contains("30m before reset") == true)
+        XCTAssertEqual(FloatingBarLayout.size(items: items, availableWidth: 1280),
+                       FloatingBarLayout.size(items: plain, availableWidth: 1280))
     }
 
     func testVisibilityFiltersIndividualProfilesAndProvidersWithoutChangingQuotas() {

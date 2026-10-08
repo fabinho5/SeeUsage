@@ -11,6 +11,7 @@ public struct QuotaSampleRecord: Codable, Sendable, Identifiable {
     public let scope: String?
     public let windowLabel: String
     public let windowID: String?
+    public let durationMinutes: Int?
     public let remainingPercent: Double
     public let resetsAt: Date?
 
@@ -22,6 +23,7 @@ public struct QuotaSampleRecord: Codable, Sendable, Identifiable {
         scope: String?,
         windowLabel: String,
         windowID: String? = nil,
+        durationMinutes: Int? = nil,
         remainingPercent: Double,
         resetsAt: Date?
     ) {
@@ -32,6 +34,7 @@ public struct QuotaSampleRecord: Codable, Sendable, Identifiable {
         self.scope = scope
         self.windowLabel = windowLabel
         self.windowID = windowID
+        self.durationMinutes = durationMinutes
         self.remainingPercent = remainingPercent
         self.resetsAt = resetsAt
     }
@@ -154,8 +157,7 @@ public final class AnalyticsManager {
 
     // MARK: - Persistence
     public func loadHistory() {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = Self.historyDecoder()
 
         let historyData = SharedFileLock.withExclusiveLock(for: historyURL) {
             try? Data(contentsOf: historyURL)
@@ -177,10 +179,11 @@ public final class AnalyticsManager {
 
     public func saveHistory() {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        // Numeric epoch dates preserve sample/batch identity across save/load. ISO 8601
+        // without fractions rounded source timestamps and duplicated batches on merge.
+        encoder.dateEncodingStrategy = .secondsSince1970
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = Self.historyDecoder()
 
         SharedFileLock.withExclusiveLock(for: historyURL) {
             var byTimestamp: [Double: QuotaHistorySnapshot] = [:]
@@ -192,7 +195,9 @@ public final class AnalyticsManager {
             if let clearDate = Self.readClearMarker(historyClearMarkerURL) {
                 byTimestamp = byTimestamp.filter { $0.value.timestamp > clearDate }
             }
-            snapshots = byTimestamp.values.sorted { $0.timestamp < $1.timestamp }.suffix(3000)
+            // Weekly forecasts need several days even at one-minute polling with
+            // independently refreshing providers. Keep older, sparsely sampled history too.
+            snapshots = byTimestamp.values.sorted { $0.timestamp < $1.timestamp }.suffix(20_000)
                 .map { $0 }
             if let data = try? encoder.encode(snapshots) {
                 try? data.write(to: historyURL, options: .atomic)
@@ -265,88 +270,107 @@ public final class AnalyticsManager {
             for window in snapshot.windows {
                 guard let pct = window.remainingPercent else { continue }
                 records.append(QuotaSampleRecord(
-                    timestamp: now,
+                    timestamp: snapshot.fetchedAt,
                     profileID: profileID,
                     profileName: profileName,
                     service: service,
                     scope: window.scope,
                     windowLabel: window.label,
                     windowID: window.id,
+                    durationMinutes: window.durationMinutes,
                     remainingPercent: pct,
                     resetsAt: window.resetsAt
                 ))
             }
         }
 
+        recordSamples(records, recordedAt: now)
+    }
+
+    public func recordClaudeUsage(_ snapshot: ClaudeUsageSnapshot) {
+        let now = Date()
+        let staleAfter = Double(max(600, SettingsStore.shared.refreshIntervalMinutes * 120))
+        guard now.timeIntervalSince(snapshot.updatedAt) >= 0,
+              now.timeIntervalSince(snapshot.updatedAt) <= staleAfter else { return }
+        let records = snapshot.windows.compactMap { window -> QuotaSampleRecord? in
+            guard let percent = window.remainingPercent else { return nil }
+            return QuotaSampleRecord(
+                timestamp: snapshot.updatedAt, profileID: ClaudeUsageSnapshot.profileID,
+                profileName: "Claude Code", service: "Claude Code", scope: window.scope,
+                windowLabel: window.label, windowID: window.id, durationMinutes: window.durationMinutes,
+                remainingPercent: percent, resetsAt: window.resetsAt
+            )
+        }
+        recordSamples(records, recordedAt: now)
+    }
+
+    private func recordSamples(_ samples: [QuotaSampleRecord], recordedAt now: Date) {
+        // Sources refresh independently. Compare against each window's most recent sample,
+        // rather than the last batch (which may contain only Claude or only Codex).
+        let wanted = Set(samples.map(\.id))
+        var lastRecordsMap: [String: QuotaSampleRecord] = [:]
+        for snapshot in snapshots.reversed() {
+            for record in snapshot.records where wanted.contains(record.id) {
+                if let existing = lastRecordsMap[record.id], existing.timestamp >= record.timestamp { continue }
+                lastRecordsMap[record.id] = record
+            }
+            if lastRecordsMap.count == wanted.count { break }
+        }
+        let records = samples.filter { record in
+            guard record.remainingPercent.isFinite, (0...100).contains(record.remainingPercent),
+                  record.timestamp <= now else { return false }
+            guard let previous = lastRecordsMap[record.id] else { return true }
+            let elapsed = record.timestamp.timeIntervalSince(previous.timestamp)
+            return elapsed > 0.000_001 && (
+                elapsed >= 45 || abs(record.remainingPercent - previous.remainingPercent) > 0.001 ||
+                record.resetsAt != previous.resetsAt || record.durationMinutes != previous.durationMinutes
+            )
+        }
         guard !records.isEmpty else { return }
 
-        // Detect Reset Events by comparing against the most recent snapshot
-        if let lastSnapshot = snapshots.last {
-            var lastRecordsMap: [String: QuotaSampleRecord] = [:]
-            for r in lastSnapshot.records {
-                let key = r.id
-                lastRecordsMap[key] = r
+        // Detect reset events against each window's previous source reading.
+        for newRecord in records {
+            let key = newRecord.id
+            guard let oldRecord = lastRecordsMap[key] else { continue }
+
+            guard newRecord.remainingPercent > oldRecord.remainingPercent else { continue }
+            let resetCycleAdvanced: Bool
+            if let oldReset = oldRecord.resetsAt {
+                let deadlineAdvanced = newRecord.resetsAt.map { $0.timeIntervalSince(oldReset) > 60 } ?? false
+                resetCycleAdvanced = oldReset <= newRecord.timestamp || deadlineAdvanced
+            } else {
+                resetCycleAdvanced = false
             }
 
-            for newRecord in records {
-                let key = newRecord.id
-                guard let oldRecord = lastRecordsMap[key] else { continue }
+            if resetCycleAdvanced {
+                let duration = newRecord.durationMinutes
 
-                guard newRecord.remainingPercent > oldRecord.remainingPercent else { continue }
-                let resetCycleAdvanced: Bool
-                if let oldReset = oldRecord.resetsAt {
-                    let deadlineAdvanced = newRecord.resetsAt.map { $0.timeIntervalSince(oldReset) > 60 } ?? false
-                    resetCycleAdvanced = oldReset <= now || deadlineAdvanced
-                } else {
-                    resetCycleAdvanced = false
+                // Avoid duplicate logging within 2 minutes for the same window
+                let isDuplicate = resetEvents.contains { past in
+                    past.profileID == newRecord.profileID &&
+                    past.windowLabel == newRecord.windowLabel &&
+                    past.scope == newRecord.scope &&
+                    abs(past.timestamp.timeIntervalSince(now)) < 120.0
                 }
 
-                if resetCycleAdvanced {
-                    let win = usageSnapshots[newRecord.profileID]?.windows.first(where: { $0.id == newRecord.windowID })
-                    let duration = win?.durationMinutes
-
-                    // Avoid duplicate logging within 2 minutes for the same window
-                    let isDuplicate = resetEvents.contains { past in
-                        past.profileID == newRecord.profileID &&
-                        past.windowLabel == newRecord.windowLabel &&
-                        past.scope == newRecord.scope &&
-                        abs(past.timestamp.timeIntervalSince(now)) < 120.0
-                    }
-
-                    if !isDuplicate {
-                        let event = ResetEvent(
-                            id: UUID(),
-                            timestamp: now,
-                            profileID: newRecord.profileID,
-                            profileName: newRecord.profileName,
-                            service: newRecord.service,
-                            scope: newRecord.scope,
-                            windowLabel: newRecord.windowLabel,
-                            durationMinutes: duration,
-                            quotaBefore: oldRecord.remainingPercent,
-                            quotaAfter: newRecord.remainingPercent,
-                            quotaRestored: max(0.0, newRecord.remainingPercent - oldRecord.remainingPercent),
-                            nextResetAt: newRecord.resetsAt
-                        )
-                        resetEvents.insert(event, at: 0)
-                    }
+                if !isDuplicate {
+                    let event = ResetEvent(
+                        id: UUID(),
+                        timestamp: now,
+                        profileID: newRecord.profileID,
+                        profileName: newRecord.profileName,
+                        service: newRecord.service,
+                        scope: newRecord.scope,
+                        windowLabel: newRecord.windowLabel,
+                        durationMinutes: duration,
+                        quotaBefore: oldRecord.remainingPercent,
+                        quotaAfter: newRecord.remainingPercent,
+                        quotaRestored: max(0.0, newRecord.remainingPercent - oldRecord.remainingPercent),
+                        nextResetAt: newRecord.resetsAt
+                    )
+                    resetEvents.insert(event, at: 0)
                 }
             }
-        }
-
-        // Deduplicate snapshots against very recent recording (under 45 seconds) unless quota changed
-        if let last = snapshots.last,
-           now.timeIntervalSince(last.timestamp) < 45.0 {
-            let lastRecordsMap = last.records.reduce(into: [String: Double]()) { map, record in
-                map[record.id] = record.remainingPercent
-            }
-            let hasChange = records.contains { record in
-                if let oldPct = lastRecordsMap[record.id] {
-                    return abs(oldPct - record.remainingPercent) > 0.001
-                }
-                return true
-            }
-            if !hasChange { return }
         }
 
         let newSnapshot = QuotaHistorySnapshot(timestamp: now, records: records)
@@ -407,7 +431,7 @@ public final class AnalyticsManager {
                     scope: record.scope,
                     windowLabel: record.windowLabel,
                     windowID: record.windowID,
-                    durationMinutes: nil,
+                    durationMinutes: record.durationMinutes,
                     currentRemainingPercent: record.remainingPercent,
                     resetsAt: resetDate
                 ))
@@ -434,6 +458,20 @@ public final class AnalyticsManager {
     }
 
     // MARK: - Computations
+    func quotaHints(
+        for window: UsageWindow, profileID: UUID, service: String,
+        windows: [UsageWindow], fetchedAt: Date, hasError: Bool = false,
+        now: Date = Date()
+    ) -> QuotaHints? {
+        let interval = SettingsStore.shared.refreshIntervalMinutes
+        return QuotaForecastCalculations.hints(
+            for: window, profileID: profileID, service: service, windows: windows,
+            history: snapshots, fetchedAt: fetchedAt, hasError: hasError, now: now,
+            staleAfter: Double(max(600, interval * 120)),
+            maximumSampleGap: Double(max(1_800, interval * 120))
+        )
+    }
+
     public func computeHourlyConsumption(days: Int = 7) -> [HourlyConsumption] {
         AnalyticsCalculations.hourlyConsumption(in: snapshots, days: days)
     }
@@ -537,17 +575,36 @@ public final class AnalyticsManager {
         "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
     }
 
+    private static func historyDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let epoch = try? container.decode(Double.self), epoch.isFinite {
+                return Date(timeIntervalSince1970: epoch)
+            }
+            // Existing history and reset files used ISO 8601 strings.
+            let text = try container.decode(String.self)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text) { return date }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid history date")
+        }
+        return decoder
+    }
+
     private static func readClearMarker(_ url: URL) -> Date? {
         guard let value = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        if let epoch = Double(value.trimmingCharacters(in: .whitespacesAndNewlines)), epoch.isFinite {
+            return Date(timeIntervalSince1970: epoch)
+        }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
     private static func writeClearMarker(_ url: URL) {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let value = formatter.string(from: Date())
+        // Millisecond rounding can move a clear marker ahead of a newly recorded event.
+        let value = String(Date().timeIntervalSince1970)
         try? Data(value.utf8).write(to: url, options: .atomic)
     }
 

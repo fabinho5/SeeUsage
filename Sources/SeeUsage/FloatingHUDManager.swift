@@ -202,7 +202,8 @@ public final class FloatingHUDManager: NSObject, NSWindowDelegate {
             claudeUsage: store.claudeUsageSnapshot,
             refreshIntervalMinutes: settings.refreshIntervalMinutes,
             quotas: settings.hudBarQuotas,
-            hiddenItems: settings.hudBarHiddenItems
+            hiddenItems: settings.hudBarHiddenItems,
+            displayNames: settings.profilePresentation.displayNames
         )
     }
 
