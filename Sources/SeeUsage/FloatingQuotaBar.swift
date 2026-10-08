@@ -122,15 +122,33 @@ struct FloatingQuotaBar: View {
                         .foregroundStyle(value.percent.map { UIColors.quotaTextColor(percent: $0) } ?? .secondary)
                         .frame(width: FloatingBarLayout.percentageWidth, alignment: .trailing)
                 }
-                .help("\(item.label) · \(value.period.title)\(value.percent == nil ? " · Unavailable" : "")"
-                      + (value.hints.map { "\n" + $0.tooltip } ?? ""))
+                .help(quotaHelpText(for: value, profileName: item.label))
                 .accessibilityLabel(value.period.title)
-                .accessibilityValue((value.percent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
-                                    + (value.hints.map { ", " + ($0.pacing?.text ?? $0.forecast.text)
-                                        + ($0.sessionText.map { ", " + $0 } ?? "")
-                                        + ($0.pacing?.windowText.map { ", " + $0 } ?? "") } ?? ""))
+                .accessibilityValue(quotaAccessibilityText(for: value))
             }
         }
+    }
+
+    private func quotaHelpText(for value: FloatingQuotaValue, profileName: String) -> String {
+        var text = "\(profileName) · \(value.period.title)"
+        if value.percent == nil { text += " · Unavailable" }
+        if let hints = value.hints { text += "\n" + hints.tooltip }
+        return text
+    }
+
+    private func quotaAccessibilityText(for value: FloatingQuotaValue) -> String {
+        var parts: [String] = []
+        if let percent = value.percent {
+            parts.append("\(Int(percent.rounded()))%")
+        } else {
+            parts.append("Unavailable")
+        }
+        if let hints = value.hints {
+            parts.append(hints.pacing?.text ?? hints.forecast.text)
+            if let sessions = hints.sessionText { parts.append(sessions) }
+            if let windows = hints.pacing?.windowText { parts.append(windows) }
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
