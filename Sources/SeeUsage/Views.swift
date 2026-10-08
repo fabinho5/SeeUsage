@@ -49,12 +49,6 @@ public enum SettingsTab: String, Sendable {
     case general, profiles
 }
 
-private struct PendingReset: Identifiable {
-    let profile: UsageProfile
-    let credit: BankedResetCredit
-    var id: String { "\(profile.id.uuidString):\(credit.id)" }
-}
-
 public enum Formatters {
     public static func dayMonth(_ date: Date) -> String {
         dateString(date, format: "d/M")
@@ -105,9 +99,7 @@ public struct UsagePopoverView: View {
     @Bindable private var store = UsageStore.shared
     @Bindable private var settings: SettingsStore
     @Bindable private var analytics = AnalyticsManager.shared
-    @State private var pendingReset: PendingReset?
-    @State private var isConfirmingReset = false
-    @State private var resultMessage: String?
+    @Bindable private var resetController = BankedResetController.shared
 
     public init(settings: SettingsStore = .shared) {
         self.settings = settings
@@ -159,16 +151,7 @@ public struct UsagePopoverView: View {
                     }
 
                     if !analytics.snapshots.isEmpty {
-                        ActivityHeatmap(
-                            dailyConsumption: analytics.computeDailyConsumption(days: 85),
-                            historySnapshots: analytics.snapshots.filter {
-                                $0.timestamp >= Date().addingTimeInterval(-85 * 86_400)
-                            },
-                            codexProfiles: settings.codexProfiles,
-                            displayNames: settings.profilePresentation.displayNames,
-                            accent: settings.currentTheme.uiAccent,
-                            isCollapsed: $settings.activityCollapsed
-                        )
+                        activitySection
                     }
                 }
                 .padding(.horizontal, layout.contentHorizontalPadding)
@@ -179,26 +162,6 @@ public struct UsagePopoverView: View {
         }
         .frame(width: layout.popoverSize.width, height: layout.popoverSize.height)
         .overlay { GlassEdgeHighlight() }
-        .confirmationDialog(
-            "Use a banked reset?",
-            isPresented: $isConfirmingReset,
-            titleVisibility: .visible
-        ) {
-            Button("Use Reset", role: .destructive) {
-                if let pendingReset { activate(pendingReset) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will use one reset credit on \(pendingReset.map { settings.displayName(for: $0.profile) } ?? "this profile").")
-        }
-        .alert("Banked Reset", isPresented: Binding(
-            get: { resultMessage != nil },
-            set: { if !$0 { resultMessage = nil } }
-        )) {
-            Button("OK") { resultMessage = nil }
-        } message: {
-            Text(resultMessage ?? "")
-        }
         .tint(settings.currentTheme.uiAccent)
     }
 
@@ -279,8 +242,8 @@ public struct UsagePopoverView: View {
                             Menu {
                                 ForEach(credits) { credit in
                                     Button(Formatters.bankedCreditTitle(credit)) {
-                                        pendingReset = PendingReset(profile: profile, credit: credit)
-                                        isConfirmingReset = true
+                                        resetController.request(profile: profile, credit: credit,
+                                                                displayName: settings.displayName(for: profile))
                                     }
                                 }
                             } label: {
@@ -289,7 +252,7 @@ public struct UsagePopoverView: View {
                             .menuStyle(.borderlessButton)
                             .font(layout.actionFont)
                             .controlSize(layout.controlSize)
-                            .disabled(snapshot.error != nil || snapshot.isStale)
+                            .disabled(snapshot.error != nil || snapshot.isStale || resetController.activeProfileID != nil)
                         }
                     }
 
@@ -435,14 +398,16 @@ public struct UsagePopoverView: View {
         .padding(.vertical, layout.footerVerticalPadding)
     }
 
-    private func activate(_ item: PendingReset) {
-        Task {
-            let result = await store.consumeBankedReset(
-                for: item.profile,
-                creditId: item.credit.serverCreditID
-            )
-            resultMessage = result.message
-        }
+    private var activitySection: some View {
+        // Keep the heatmap's identity and selected day while avoiding hidden analytics work.
+        let daily: [DailyConsumption] = settings.activityCollapsed ? [] : analytics.computeDailyConsumption(days: 85)
+        let cutoff = Date().addingTimeInterval(-85 * 86_400)
+        let history: [QuotaHistorySnapshot] = settings.activityCollapsed ? [] : analytics.snapshots.filter { $0.timestamp >= cutoff }
+        return ActivityHeatmap(dailyConsumption: daily, historySnapshots: history,
+                               codexProfiles: settings.codexProfiles,
+                               displayNames: settings.profilePresentation.displayNames,
+                               accent: settings.currentTheme.uiAccent,
+                               isCollapsed: $settings.activityCollapsed)
     }
 }
 
@@ -713,6 +678,7 @@ private enum ClaudeProviderStatus {
 
 public struct SettingsView: View {
     @Bindable private var settings = SettingsStore.shared
+    @ObservedObject private var updater = AppUpdater.shared
     @State private var selectedTab: PreferenceTab
     @State private var claudeProviderStatus: ClaudeProviderStatus = .checking
     @State private var claudeUsageSyncEnabled = false
@@ -761,42 +727,11 @@ public struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if settings.menuBarDisplayMode.usesAccountSelection {
-                    if MenuBarQuotaItem.isSessionWeeklyPair(settings.menuBarItems) {
-                        LabeledContent("Bars", value: "Session (5h) above Weekly")
-                    } else {
-                        Picker("Show quota", selection: $settings.menuBarPreferences.quota) {
-                            ForEach(MenuBarQuota.allCases) { quota in
-                                Text(quota.title).tag(quota)
-                            }
-                        }
-                    }
-                    Picker("Show separately", selection: $settings.menuBarPreferences.grouping) {
-                        ForEach(MenuBarGrouping.allCases) { grouping in
-                            Text(grouping.title).tag(grouping)
-                        }
-                    }
-                    DisclosureGroup("Accounts and providers in menu bar") {
-                        MenuBarSelection(settings: settings)
-                    }
-                    LabeledContent("Preview") {
-                        MenuBarPreview(items: settings.menuBarItems, mode: settings.menuBarDisplayMode,
-                                       showIcon: settings.menuBarShowIcon)
-                            .help(MenuBarQuotaItem.tooltip(items: settings.menuBarItems,
-                                                         quota: settings.menuBarPreferences.quota,
-                                                         mode: settings.menuBarDisplayMode))
-                    }
-                    Text("Uses your account order. Hover over the menu bar indicator to identify each reading. Provider groups show their lowest selected account quota.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if settings.menuBarDisplayMode == .stackedBars {
-                        Text("With one selected account or provider, the top bar shows the 5-hour session and the bottom bar shows the weekly quota.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    menuBarAccountOptions
                 }
                 Toggle("Show SeeUsage icon", isOn: $settings.menuBarShowIcon)
                     .disabled([.stackedBars, .stackedPercentages, .iconOnly].contains(settings.menuBarDisplayMode))
-                Picker("Update interval", selection: $settings.refreshIntervalMinutes) {
+                Picker("Quota refresh interval", selection: $settings.refreshIntervalMinutes) {
                     Text("1 minute").tag(1)
                     Text("5 minutes").tag(5)
                     Text("10 minutes").tag(10)
@@ -891,10 +826,71 @@ public struct SettingsView: View {
                     .disabled(!settings.notificationsEnabled)
             }
 
-            LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0")
+            Section("App updates") {
+                if updater.supportsInAppUpdates {
+                    Toggle("Check automatically", isOn: Binding(
+                        get: { updater.automaticallyChecksForUpdates },
+                        set: { updater.setAutomaticChecks($0) }
+                    ))
+                    Text("Checks at launch and every hour. You choose whether to install an update.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Install the latest DMG to enable in-app updates.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button(updater.supportsInAppUpdates ? "Check for updates…" : "View latest release…") {
+                    updater.checkForUpdates()
+                }
+                .disabled(!updater.canCheckForUpdates)
+                if let error = updater.errorMessage {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            }
+
+            LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Source build")
         }
         .formStyle(.grouped)
         .tabItem { Label("General", systemImage: "gearshape") }
+    }
+
+    private var menuBarAccountOptions: some View {
+        let items = settings.menuBarItems
+        return Group {
+            if MenuBarQuotaItem.isSessionWeeklyPair(items) {
+                LabeledContent("Bars", value: "Session (5h) above Weekly")
+            } else {
+                Picker("Show quota", selection: $settings.menuBarPreferences.quota) {
+                    ForEach(MenuBarQuota.allCases) { quota in
+                        Text(quota.title).tag(quota)
+                    }
+                }
+            }
+            Picker("Show separately", selection: $settings.menuBarPreferences.grouping) {
+                ForEach(MenuBarGrouping.allCases) { grouping in
+                    Text(grouping.title).tag(grouping)
+                }
+            }
+            DisclosureGroup("Accounts and providers in menu bar") {
+                MenuBarSelection(settings: settings)
+            }
+            LabeledContent("Preview") {
+                MenuBarPreview(items: items, mode: settings.menuBarDisplayMode,
+                               showIcon: settings.menuBarShowIcon)
+                    .help(MenuBarQuotaItem.tooltip(items: items,
+                                                 quota: settings.menuBarPreferences.quota,
+                                                 mode: settings.menuBarDisplayMode))
+            }
+            Text("Uses your account order. Hover over the menu bar indicator to identify each reading. Provider groups show their lowest selected account quota.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if settings.menuBarDisplayMode == .stackedBars {
+                Text("With one selected account or provider, the top bar shows the 5-hour session and the bottom bar shows the weekly quota.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var appearancePickerThemes: [AppTheme] {

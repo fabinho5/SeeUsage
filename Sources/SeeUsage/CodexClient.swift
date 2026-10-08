@@ -20,9 +20,10 @@ public enum CodexClient {
                 executable: executable,
                 arguments: ["app-server", "--stdio"],
                 environment: ["CODEX_HOME": (homePath as NSString).expandingTildeInPath],
-                input: requests,
+                input: requests.input,
                 timeout: timeout,
-                completionResponseID: 2
+                completionResponseID: 2,
+                handshake: requests.handshake
             )
 
             guard result.terminationStatus == 0 || !result.standardOutput.isEmpty else {
@@ -221,9 +222,10 @@ public enum CodexClient {
                 executable: executable,
                 arguments: ["app-server", "--stdio"],
                 environment: ["CODEX_HOME": (homePath as NSString).expandingTildeInPath],
-                input: requests,
+                input: requests.input,
                 timeout: timeout,
-                completionResponseID: 3
+                completionResponseID: 3,
+                handshake: requests.handshake
             )
 
             let text = String(decoding: result.standardOutput, as: UTF8.self)
@@ -247,7 +249,7 @@ public enum CodexClient {
                         return (false, "Codex returned a consume response without an outcome.")
                     }
                     if outcome == "reset" {
-                        return (true, "Banked reset successfully activated! Your quotas are fully restored.")
+                        return (true, "Banked reset activated. Refreshing account usage.")
                     } else if outcome == "nothingToReset" {
                         return (false, "Your quotas are already at 100%. Nothing to reset.")
                     } else if outcome == "alreadyRedeemed" {
@@ -266,7 +268,7 @@ public enum CodexClient {
         }
     }
 
-    private static func makeInputLines(method: String, requestID: Int, params: [String: Any]) -> Data {
+    private static func makeInputLines(method: String, requestID: Int, params: [String: Any]) -> (handshake: ProcessHandshake, input: Data) {
         let messages: [[String: Any]] = [
             ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [
                 "clientInfo": ["name": "SeeUsage", "version": "1.1.0"]
@@ -280,6 +282,7 @@ public enum CodexClient {
             }
             return String(decoding: data, as: UTF8.self)
         }
-        return Data((lines.joined(separator: "\n") + "\n").utf8)
+        let handshake = ProcessHandshake(input: Data((lines[0] + "\n").utf8), responseID: 1)
+        return (handshake, Data((lines.dropFirst().joined(separator: "\n") + "\n").utf8))
     }
 }

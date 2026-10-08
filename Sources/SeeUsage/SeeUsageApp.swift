@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             FloatingHUDManager.shared.show()
         }
         CompanionManager.shared.applySettings()
+        AppUpdater.shared.start()
 
         Task { @MainActor in
             await UsageStore.shared.refresh()

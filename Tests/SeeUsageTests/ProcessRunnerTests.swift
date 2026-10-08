@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 @testable import SeeUsage
 
 final class ProcessRunnerTests: XCTestCase {
@@ -44,5 +45,34 @@ final class ProcessRunnerTests: XCTestCase {
         let echoPath = ProcessRunner.resolveExecutable(named: "echo")
         XCTAssertNotNil(echoPath)
         XCTAssertTrue(echoPath?.hasSuffix("/echo") == true)
+    }
+
+    func testInheritedPipesDoNotHangAfterParentExits() async throws {
+        let pidFile = FileManager.default.temporaryDirectory.appendingPathComponent("SeeUsageFakeChild-\(UUID())")
+        defer {
+            if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                _ = kill(pid, SIGTERM)
+            }
+            try? FileManager.default.removeItem(at: pidFile)
+        }
+        let started = Date()
+        let result = try await ProcessRunner.run(
+            executable: "/bin/sh",
+            arguments: ["-c", "/bin/sleep 5 & printf '%s' $! > \"$1\"; printf 'done'; exit 0", "fixture", pidFile.path],
+            timeout: 2
+        )
+        XCTAssertEqual(result.outputString, "done")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
+    }
+
+    func testFragmentedResponseAndMatchingServerRequestDoNotEndProcessEarly() async throws {
+        let result = try await ProcessRunner.run(
+            executable: "/bin/sh",
+            arguments: ["-c", #"printf '%s\n' '{"id":3,"method":"fake/server/request"}'; printf '%s' '{"id":3,"result":'; /bin/sleep 0.1; printf '%s\n' '{"outcome":"fake"}}'"#],
+            timeout: 3,
+            completionResponseID: 3
+        )
+        XCTAssertTrue(result.outputString.contains(#"{"id":3,"result":{"outcome":"fake"}}"#))
     }
 }

@@ -106,8 +106,14 @@ enum QuotaForecastCalculations {
         // This independent reserve pool isn't the main weekly/session allowance.
         if service == "Codex", CodexQuotaPresentation.isReserve(window) { return nil }
         let weekly = FloatingQuotaPeriod.weekly.matches(window)
-        let records = history.flatMap(\.records).filter {
-            $0.profileID == profileID && $0.service == service && $0.scope == window.scope && $0.timestamp <= fetchedAt
+        let cutoff = fetchedAt.addingTimeInterval(weekly ? -14 * 86_400 : -2 * 3_600)
+        var records: [QuotaSampleRecord] = []
+        for snapshot in history {
+            for record in snapshot.records {
+                guard record.timestamp >= cutoff, record.timestamp <= fetchedAt,
+                      record.profileID == profileID, record.service == service, record.scope == window.scope else { continue }
+                records.append(record)
+            }
         }
         let current = QuotaSampleRecord(timestamp: fetchedAt, profileID: profileID, profileName: "",
                                         service: service, scope: window.scope, windowLabel: window.label,

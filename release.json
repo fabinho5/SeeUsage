@@ -1,0 +1,8 @@
+{
+  "version": "1.1.1",
+  "build": 2,
+  "repository": "fabinho5/SeeUsage",
+  "feedURL": "https://github.com/fabinho5/SeeUsage/releases/latest/download/appcast.xml",
+  "publicKey": "Esi4vWnxG1NLt7LitULwBGCvVcu98HoUFsZ1t3EVKYs=",
+  "signingAccount": "SeeUsage-fabinho5"
+}

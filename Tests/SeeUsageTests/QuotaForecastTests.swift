@@ -150,6 +150,42 @@ final class QuotaForecastTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(calculate(window: window, history: history)).forecast.status, .reserve)
     }
 
+    func testShortLookbackFollowsSourceTimeAndIgnoresSnapshotMetadata() throws {
+        let window = shortWindow(70)
+        let reading = now.addingTimeInterval(-300)
+        let samples = [90.0, 85, 80, 75, 70].enumerated().map { step, percent in
+            record(window: window, at: reading.addingTimeInterval(Double(step - 4) * 1_800), remaining: percent)
+        }
+        let original = try XCTUnwrap(calculate(window: window, history: samples.map { snapshot([$0]) }, fetchedAt: reading))
+        let decorated = samples.map { sample in
+            QuotaHistorySnapshot(timestamp: now.addingTimeInterval(-30 * 86_400), records: [
+                record(window: window, at: reading.addingTimeInterval(-7_201), remaining: 1),
+                record(window: window, at: sample.timestamp, remaining: 0, profile: UUID()), sample
+            ])
+        }
+        XCTAssertEqual(calculate(window: window, history: decorated, fetchedAt: reading), original)
+        XCTAssertEqual(original.forecast.observedSeconds, 7_200)
+        XCTAssertEqual(original.forecast.sampleCount, 5)
+    }
+
+    func testCompletedSessionsAtTheFourteenDayBoundaryRemainUsable() throws {
+        let shift = -14 * 86_400.0 + 20 * 3_600
+        let history = sessionHistory(costs: [5, 10, 50]).map { entry in
+            snapshot(entry.records.map { sample in
+                let window = sample.windowID == "5h"
+                    ? shortWindow(80, reset: sample.resetsAt?.addingTimeInterval(shift)) : weeklyWindow(35)
+                return record(window: window, at: sample.timestamp.addingTimeInterval(shift),
+                              remaining: sample.remainingPercent)
+            })
+        }
+        let result = try XCTUnwrap(calculate(window: weeklyWindow(35), history: history,
+                                            fetchedAt: now.addingTimeInterval(-300)))
+        let estimate = try XCTUnwrap(result.sessions)
+        XCTAssertEqual(estimate.observedSessions, 3)
+        XCTAssertEqual(estimate.typicalConsumption, 10)
+        XCTAssertEqual(estimate.fractionalCount, 3.5)
+    }
+
     private func hints(remaining: Double, percentages: [Double]) -> QuotaHints? {
         let window = shortWindow(remaining)
         return calculate(window: window, history: shortHistory(window, percentages: percentages))

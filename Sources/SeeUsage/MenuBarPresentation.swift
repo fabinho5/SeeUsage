@@ -40,61 +40,76 @@ struct MenuBarQuotaItem: Identifiable, Equatable {
     var quota: MenuBarQuota? = nil
     var percentText: String { percent.map { "\($0)%" } ?? "–" }
 
+    private struct Source {
+        let provider: String
+        let id: String
+        let label: String
+        let windows: [UsageWindow]
+    }
+
     static func items(
         profiles: [UsageProfile], snapshots: [UUID: UsageSnapshot], claudeUsage: ClaudeUsageSnapshot?,
         preferences: MenuBarPreferences, displayNames: [UUID: String] = [:],
         refreshIntervalMinutes: Int = 5, now: Date = Date(), mode: MenuBarDisplayMode = .percent
     ) -> [Self] {
         let staleAfter = Double(max(600, refreshIntervalMinutes * 120))
-        var sources: [(provider: String, item: Self)] = profiles.compactMap { profile in
+        var sources: [Source] = profiles.compactMap { profile in
             guard FloatingBarVisibility.includes(profile, hiddenItems: preferences.hiddenItems) else { return nil }
             let snapshot = snapshots[profile.id]
             let isCurrent = snapshot.map {
                 $0.error == nil && now.timeIntervalSince($0.fetchedAt) <= staleAfter
                     && $0.fetchedAt.timeIntervalSince(now) <= 60
             } ?? false
-            let windows = (snapshot?.windows ?? []).filter {
+            let windows = isCurrent ? (snapshot?.windows ?? []).filter {
                 profile.provider != .codex || !CodexQuotaPresentation.isReserve($0)
-            }
-            return (profile.provider.rawValue, Self(
+            } : []
+            return Source(provider: profile.provider.rawValue,
                 id: profile.id.uuidString, label: displayNames[profile.id] ?? profile.name,
-                percent: isCurrent ? remaining(in: windows, quota: preferences.quota, now: now) : nil
-            ))
+                windows: windows)
         }
         if let claudeUsage, !preferences.hiddenItems.contains(FloatingBarVisibility.claude) {
             let isCurrent = now.timeIntervalSince(claudeUsage.updatedAt) <= staleAfter
                 && claudeUsage.updatedAt.timeIntervalSince(now) <= 60
-            sources.append(("claude", Self(
+            sources.append(Source(provider: "claude",
                 id: ClaudeUsageSnapshot.profileID.uuidString,
                 label: displayNames[ClaudeUsageSnapshot.profileID] ?? "Claude Code",
-                percent: isCurrent ? remaining(in: claudeUsage.windows, quota: preferences.quota, now: now) : nil
-            )))
+                windows: isCurrent ? claudeUsage.windows : []))
         }
-        var result = sources.map(\.item)
+        let groups: [[Source]]
         if preferences.grouping == .providers {
             var providerOrder: [String] = []
-            for source in sources where !providerOrder.contains(source.provider) {
-                providerOrder.append(source.provider)
+            var byProvider: [String: [Source]] = [:]
+            for source in sources {
+                if byProvider[source.provider] == nil { providerOrder.append(source.provider) }
+                byProvider[source.provider, default: []].append(source)
             }
-            result = providerOrder.map { provider in
-                let entries = sources.filter { $0.provider == provider }.map(\.item)
-                let name = provider == "codex" ? "Codex" : provider == "antigravity" ? "Antigravity" : "Claude Code"
-                let accounts = entries.map(\.label).joined(separator: ", ")
-                return Self(id: "provider:\(provider)", label: "\(name) (\(accounts))",
-                            percent: entries.compactMap(\.percent).min())
+            groups = providerOrder.compactMap { byProvider[$0] }
+        } else {
+            groups = sources.map { [$0] }
+        }
+        let paired = mode == .stackedBars && groups.count == 1
+        let periods: [MenuBarQuota] = paired ? [.fiveHours, .weekly] : [preferences.quota]
+        var result: [Self] = []
+        for group in groups {
+            guard let first = group.first else { continue }
+            let id: String
+            let label: String
+            if preferences.grouping == .providers {
+                id = "provider:\(first.provider)"
+                let name = first.provider == "codex" ? "Codex" : first.provider == "antigravity" ? "Antigravity" : "Claude Code"
+                label = "\(name) (\(group.map(\.label).joined(separator: ", ")))"
+            } else {
+                id = first.id
+                label = first.label
+            }
+            for period in periods {
+                let percent = group.compactMap { remaining(in: $0.windows, quota: period, now: now) }.min()
+                result.append(Self(id: paired ? "\(id):\(period.rawValue)" : id,
+                                   label: paired ? "\(label) · \(period.title)" : label,
+                                   percent: percent, quota: paired ? period : nil))
             }
         }
-        guard mode == .stackedBars, result.count == 1 else { return result }
-        // Reuse the same selection, freshness checks, and provider grouping for each period.
-        return [MenuBarQuota.fiveHours, .weekly].compactMap { quota in
-            var periodPreferences = preferences
-            periodPreferences.quota = quota
-            guard let item = items(profiles: profiles, snapshots: snapshots, claudeUsage: claudeUsage,
-                                  preferences: periodPreferences, displayNames: displayNames,
-                                  refreshIntervalMinutes: refreshIntervalMinutes, now: now).first else { return nil }
-            return Self(id: "\(item.id):\(quota.rawValue)", label: "\(item.label) · \(quota.title)",
-                        percent: item.percent, quota: quota)
-        }
+        return result
     }
 
     static func isSessionWeeklyPair(_ items: [Self]) -> Bool {
@@ -102,10 +117,13 @@ struct MenuBarQuotaItem: Identifiable, Equatable {
     }
 
     private static func remaining(in windows: [UsageWindow], quota: MenuBarQuota, now: Date) -> Int? {
-        windows.filter { quota.matches($0) && ($0.resetsAt.map { $0 > now } ?? true) }
-            .compactMap(\.remainingPercent)
-            .filter { $0.isFinite && (0...100).contains($0) }
-            .min().map { Int($0.rounded()) }
+        var lowest: Double?
+        for window in windows {
+            guard quota.matches(window), window.resetsAt.map({ $0 > now }) ?? true,
+                  let percent = window.remainingPercent, percent.isFinite, (0...100).contains(percent) else { continue }
+            lowest = min(lowest ?? percent, percent)
+        }
+        return lowest.map { Int($0.rounded()) }
     }
 
     static func tooltip(items: [Self], quota: MenuBarQuota, mode: MenuBarDisplayMode) -> String {
