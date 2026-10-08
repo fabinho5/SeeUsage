@@ -72,6 +72,61 @@ final class AppUpdaterTests: XCTestCase {
         updater.checkForUpdates()
         XCTAssertEqual(opens, 1)
     }
+
+    func testMissingFeedShowsFriendlyStatusWithoutOpeningSparklesErrorDialog() async throws {
+        for (availability, message) in [(AppUpdateAvailability.upToDate, "You’re up to date."),
+                                        (.notPublished, "No updates have been published yet.")] {
+            let backend = FakeUpdateBackend()
+            let updater = AppUpdater(backend: backend, checkAvailability: { availability })
+            let task = try XCTUnwrap(updater.checkForUpdates())
+            XCTAssertFalse(updater.canCheckForUpdates)
+            XCTAssertNil(updater.checkForUpdates(), "Duplicate clicks must share the pending check")
+            await task.value
+            XCTAssertEqual(updater.noticeMessage, message)
+            XCTAssertEqual(backend.manualChecks, 0)
+            XCTAssertTrue(updater.canCheckForUpdates)
+            XCTAssertNil(updater.errorMessage)
+        }
+    }
+
+    func testValidFeedStillUsesSparklesSignatureVerificationAndUI() async throws {
+        let backend = FakeUpdateBackend()
+        let updater = AppUpdater(backend: backend, checkAvailability: { .feedAvailable })
+        let task = try XCTUnwrap(updater.checkForUpdates())
+        await task.value
+        XCTAssertEqual(backend.manualChecks, 1)
+        XCTAssertNil(updater.noticeMessage)
+    }
+
+    func testFailedPreflightCanBeRetriedWithoutClaimingNoUpdates() async throws {
+        let backend = FakeUpdateBackend()
+        var attempts = 0
+        let updater = AppUpdater(backend: backend, checkAvailability: {
+            attempts += 1
+            if attempts == 1 { throw URLError(.notConnectedToInternet) }
+            return .upToDate
+        })
+        let failed = try XCTUnwrap(updater.checkForUpdates())
+        await failed.value
+        XCTAssertTrue(updater.noticeMessage?.hasPrefix("Couldn’t check for updates.") == true)
+        XCTAssertTrue(updater.canCheckForUpdates)
+        XCTAssertNil(updater.errorMessage)
+        let retried = try XCTUnwrap(updater.checkForUpdates())
+        await retried.value
+        XCTAssertEqual(updater.noticeMessage, "You’re up to date.")
+        XCTAssertEqual(backend.manualChecks, 0)
+    }
+
+    func testUnsignedReleaseMetadataOffersLinkWithoutInstalling() async throws {
+        let backend = FakeUpdateBackend()
+        let url = URL(string: "https://github.com/example/SeeUsage/releases/tag/v1.2.0")!
+        let updater = AppUpdater(backend: backend, checkAvailability: { .manualRelease(version: "1.2.0", url: url) })
+        let task = try XCTUnwrap(updater.checkForUpdates())
+        await task.value
+        XCTAssertEqual(updater.availableReleaseURL, url)
+        XCTAssertTrue(updater.noticeMessage?.contains("1.2.0") == true)
+        XCTAssertEqual(backend.manualChecks, 0)
+    }
 }
 
 @MainActor

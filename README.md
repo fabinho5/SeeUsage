@@ -40,7 +40,7 @@ Download the universal DMG for Apple Silicon and Intel Macs from [this fork's la
 
 The packaged app needs macOS 14 or newer, with no Swift compiler, Xcode, or Conda required. Provider CLIs still need to be installed and authenticated for their quotas to appear. Fresh installations use the Compact UI profile.
 
-Users of 1.1.0 or an original source installation must install an updater-enabled DMG once. After that, new stable releases can be installed inside the app. A network connection is required for update checks, which contact GitHub; no provider credentials or system profiling data are sent. Checks can be disabled in Settings. Missing feeds and network errors leave the installed app unchanged.
+Users of 1.1.0 or an original source installation must install an updater-enabled DMG once. After that, new stable releases can be installed inside the app. A network connection is required for update checks, which contact GitHub; no provider credentials or system profiling data are sent. Checks can be disabled in Settings. Before a feed is published, manual checks show “You’re up to date” or “No updates have been published yet” based on GitHub's latest stable release. A newer release without a feed offers a manual release link. Network/server failures show a retryable status, and signature errors remain errors. These checks never install an unsigned release; missing feeds and network errors leave the installed app unchanged.
 
 To use the optional terminal command, link the installed executable (adjust the app path if you installed into `~/Applications`):
 

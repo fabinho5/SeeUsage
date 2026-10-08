@@ -844,6 +844,12 @@ public struct SettingsView: View {
                     updater.checkForUpdates()
                 }
                 .disabled(!updater.canCheckForUpdates)
+                if let notice = updater.noticeMessage {
+                    Text(notice).font(.caption).foregroundStyle(.secondary)
+                }
+                if let releaseURL = updater.availableReleaseURL {
+                    Link("View release", destination: releaseURL)
+                }
                 if let error = updater.errorMessage {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
